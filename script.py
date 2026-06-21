@@ -7,11 +7,9 @@ import requests
 API_KEY = os.environ.get("RIOT_API_KEY", "")
 ACCOUNT_REGION = "americas"
 MATCH_REGION = "americas"
-# GAME_NAME = "your sona mommy"
-# TAG_LINE = "uwu"
-
-GAME_NAME = "utv"
-TAG_LINE = "na1"
+GAME_NAME = "your sona mommy"
+TAG_LINE = "uwu"
+ 
 RECENT_ACTIVITY_MINUTES = 45
 MATCH_QUEUE = 420
 
