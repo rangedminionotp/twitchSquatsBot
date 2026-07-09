@@ -16,6 +16,7 @@ PORT = int(os.environ.get("PORT", "8080"))
 CALLBACK_PATH = os.environ.get("TWITCH_CALLBACK_PATH", "/eventsub")
 POPUP_PATH = os.environ.get("TWITCH_POPUP_PATH", "/squat-popup")
 POPUP_EVENTS_PATH = os.environ.get("TWITCH_POPUP_EVENTS_PATH", "/popup-events")
+SQUAT_COMPLETE_PATH = os.environ.get("TWITCH_SQUAT_COMPLETE_PATH", "/squat-complete")
 EVENTSUB_SECRET = os.environ.get("TWITCH_EVENTSUB_SECRET", "")
 BROADCASTER_LOGIN = "nannersowo"
 TARGET_REWARD_TITLE = os.environ.get("TARGET_REWARD_TITLE", "Hydrate")
@@ -24,9 +25,10 @@ MAX_MESSAGE_AGE_SECONDS = 600
 AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
 DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
-POPUP_VERSION = "2026-06-21-debug-3"
+POPUP_VERSION = "2026-07-09-soft-lock-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
 RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", "python3 script.py")
+SOFT_LOCK_ENABLED = os.environ.get("SOFT_LOCK_ENABLED", "1") == "1"
 
 MESSAGE_ID_HEADER = "Twitch-Eventsub-Message-Id"
 MESSAGE_TIMESTAMP_HEADER = "Twitch-Eventsub-Message-Timestamp"
@@ -59,7 +61,7 @@ POPUP_HTML = """<!DOCTYPE html>
         linear-gradient(160deg, #0d1016 0%, #121a27 60%, #0a0d14 100%);
       color: var(--text);
       min-height: 100vh;
-      overflow: hidden;
+      overflow: auto;
     }
     .shell {
       display: grid;
@@ -130,6 +132,7 @@ POPUP_HTML = """<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       gap: 18px;
+      overflow: auto;
     }
     .eyebrow {
       color: var(--accent);
@@ -165,6 +168,65 @@ POPUP_HTML = """<!DOCTYPE html>
     .card span {
       font-size: 26px;
       line-height: 1.15;
+    }
+    .form-guide {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .form-step {
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 2px solid rgba(255, 255, 255, 0.08);
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+    .form-step.active {
+      border-color: var(--accent);
+      background: rgba(102, 240, 201, 0.13);
+      transform: translateY(-2px);
+    }
+    .form-step strong {
+      display: block;
+      color: var(--text);
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    .form-step span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .angle-readout {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .angle-readout strong { margin: 0; }
+    .angle-readout span {
+      font-size: 24px;
+      font-weight: 800;
+    }
+    .depth-track {
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.09);
+    }
+    .depth-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transition: width 100ms linear;
+    }
+    .threshold-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 11px;
     }
     .pill-row {
       display: flex;
@@ -206,6 +268,28 @@ POPUP_HTML = """<!DOCTYPE html>
     button.secondary {
       background: rgba(255, 255, 255, 0.08);
       color: var(--text);
+    }
+    .camera-picker {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    select {
+      min-width: 0;
+      flex: 1;
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #171d29;
+      color: var(--text);
+      font: inherit;
+    }
+    select:disabled { opacity: 0.55; }
+    .small-button {
+      flex: 0 0 auto;
+      padding: 12px 14px;
+      border-radius: 14px;
     }
     .tiny {
       color: var(--muted);
@@ -288,6 +372,38 @@ POPUP_HTML = """<!DOCTYPE html>
         <strong>Form Hint</strong>
         <span id="phase">Stand tall with your full body visible.</span>
       </div>
+      <div class="form-guide" aria-label="Squat phase guide">
+        <div id="standIndicator" class="form-step active">
+          <strong>1. STAND</strong>
+          <span>Legs nearly straight: 155°+</span>
+        </div>
+        <div id="downIndicator" class="form-step">
+          <strong>2. DOWN</strong>
+          <span>Knees bent to 120° or lower</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="angle-readout">
+          <strong>Knee Bend</strong>
+          <span id="angleValue">--°</span>
+        </div>
+        <div class="depth-track">
+          <div id="depthFill" class="depth-fill"></div>
+        </div>
+        <div class="threshold-labels">
+          <span>Standing 180°</span>
+          <span>Down ≤120°</span>
+        </div>
+      </div>
+      <div class="card">
+        <strong>Camera Device</strong>
+        <div class="camera-picker">
+          <select id="cameraSelect" aria-label="Camera device">
+            <option value="">Start camera to load devices</option>
+          </select>
+          <button id="refreshCamerasButton" class="secondary small-button">Refresh</button>
+        </div>
+      </div>
       <div id="errorBox" class="error-box"></div>
       <div id="debugBox" class="debug-box">Debug log starting...</div>
       <div class="button-row">
@@ -303,6 +419,7 @@ POPUP_HTML = """<!DOCTYPE html>
   <script>
     async function initPopupPage() {
     const popupEventsPath = "%POPUP_EVENTS_PATH%";
+    const squatCompletePath = "%SQUAT_COMPLETE_PATH%";
     const defaultSquatTarget = Number("%DEFAULT_SQUAT_TARGET%") || 10;
     const mediaPipeScriptGroups = [
       {
@@ -337,9 +454,17 @@ POPUP_HTML = """<!DOCTYPE html>
     const debugBoxEl = document.getElementById("debugBox");
     const startButton = document.getElementById("startButton");
     const resetButton = document.getElementById("resetButton");
+    const standIndicatorEl = document.getElementById("standIndicator");
+    const downIndicatorEl = document.getElementById("downIndicator");
+    const angleValueEl = document.getElementById("angleValue");
+    const depthFillEl = document.getElementById("depthFill");
+    const cameraSelectEl = document.getElementById("cameraSelect");
+    const refreshCamerasButton = document.getElementById("refreshCamerasButton");
 
     let poseDetector;
+    let cameraStream = null;
     let streamStarted = false;
+    let renderLoopStarted = false;
     let lastVideoTime = -1;
     let currentJob = null;
     let squatCount = 0;
@@ -347,9 +472,15 @@ POPUP_HTML = """<!DOCTYPE html>
     let squatPhase = "idle";
     let lastDepth = "up";
     let cooldownFrames = 0;
+    let downCandidateFrames = 0;
+    let upCandidateFrames = 0;
     const newline = String.fromCharCode(10);
     let poseScriptsLoaded = false;
     let poseFrameInFlight = false;
+    let completionReported = false;
+    const downAngleThreshold = 120;
+    const upAngleThreshold = 155;
+    const stableFramesRequired = 3;
 
     function debugLog(message) {
       const time = new Date().toLocaleTimeString();
@@ -440,7 +571,14 @@ POPUP_HTML = """<!DOCTYPE html>
       squatPhase = "idle";
       lastDepth = "up";
       cooldownFrames = 0;
+      downCandidateFrames = 0;
+      upCandidateFrames = 0;
+      completionReported = false;
       phaseEl.textContent = "Stand tall with your full body visible.";
+      angleValueEl.textContent = "--°";
+      depthFillEl.style.width = "0%";
+      standIndicatorEl.classList.add("active");
+      downIndicatorEl.classList.remove("active");
       updateCountUi();
       setPoseState("Pose idle", "bad");
     }
@@ -480,15 +618,52 @@ POPUP_HTML = """<!DOCTYPE html>
       bannerEl.classList.remove("hidden");
       setStatus("Redeem received. Added " + addedTarget + " squats to the queue.");
       cooldownFrames = 0;
+      if (squatCount < squatTargetTotal) {
+        completionReported = false;
+      }
       updateCountUi();
       window.focus();
+    }
+
+    async function reportSquatComplete(target) {
+      if (completionReported) return;
+      completionReported = true;
+      const payload = {
+        sequence: currentJob ? currentJob.sequence : null,
+        user_login: currentJob ? currentJob.user_login : null,
+        user_name: currentJob ? currentJob.user_name : null,
+        reward_title: currentJob ? currentJob.reward_title : null,
+        squat_count: squatCount,
+        squat_target: target,
+      };
+      try {
+        const response = await fetch(squatCompletePath, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+        debugLog("soft lock release reported");
+      } catch (error) {
+        completionReported = false;
+        showError("Could not report squat completion:" + newline + (error.message || error));
+      }
     }
 
     function onPoseResults(results) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvasContext.clearRect(0, 0, canvas.width, canvas.height);
-      if (!results.poseLandmarks || !results.poseLandmarks.length) return;
+      if (!results.poseLandmarks || !results.poseLandmarks.length) {
+        phaseEl.textContent = "No body detected. Step back and keep your full body in frame.";
+        angleValueEl.textContent = "--°";
+        setPoseState("Pose lost", "bad");
+        return;
+      }
 
       const landmarks = results.poseLandmarks;
       window.drawConnectors(canvasContext, landmarks, window.POSE_CONNECTIONS, {
@@ -539,32 +714,98 @@ POPUP_HTML = """<!DOCTYPE html>
       }
     }
 
-    async function startCamera() {
-      if (streamStarted) return;
-      debugLog("start camera clicked");
-      clearError();
-      await ensurePoseLandmarker();
+    function stopCameraStream() {
+      if (!cameraStream) return;
+      cameraStream.getTracks().forEach(function (track) {
+        track.stop();
+      });
+      cameraStream = null;
+    }
+
+    async function refreshCameraDevices(preferredDeviceId) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        cameraSelectEl.innerHTML = '<option value="">Camera selection unavailable</option>';
+        cameraSelectEl.disabled = true;
+        return;
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(function (device) {
+        return device.kind === "videoinput";
+      });
+      const activeTrack = cameraStream && cameraStream.getVideoTracks()[0];
+      const activeSettings = activeTrack && activeTrack.getSettings ? activeTrack.getSettings() : {};
+      const selectedDeviceId = preferredDeviceId || activeSettings.deviceId || cameraSelectEl.value;
+
+      cameraSelectEl.innerHTML = "";
+      cameras.forEach(function (camera, index) {
+        const option = document.createElement("option");
+        option.value = camera.deviceId;
+        option.textContent = camera.label || "Camera " + (index + 1);
+        cameraSelectEl.appendChild(option);
+      });
+
+      if (!cameras.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No camera devices found";
+        cameraSelectEl.appendChild(option);
+        cameraSelectEl.disabled = true;
+        return;
+      }
+
+      cameraSelectEl.disabled = false;
+      if (selectedDeviceId && cameras.some(function (camera) { return camera.deviceId === selectedDeviceId; })) {
+        cameraSelectEl.value = selectedDeviceId;
+      }
+      debugLog("found " + cameras.length + " camera device(s)");
+    }
+
+    async function openCamera(deviceId) {
       try {
-        debugLog("requesting webcam");
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        setCameraState("Switching camera...", "warn");
+        const videoConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        };
+        if (deviceId) {
+          videoConstraints.deviceId = { exact: deviceId };
+        } else {
+          videoConstraints.facingMode = "user";
+        }
+
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
           audio: false,
         });
-        debugLog("webcam stream granted");
-        video.srcObject = stream;
+        stopCameraStream();
+        cameraStream = newStream;
+        video.srcObject = cameraStream;
         await video.play();
-        debugLog("video playback started");
         streamStarted = true;
-        setCameraState("Camera live", "");
+        const activeTrack = cameraStream.getVideoTracks()[0];
+        setCameraState(activeTrack.label || "Camera live", "");
+        await refreshCameraDevices();
+        cameraSelectEl.value = (activeTrack.getSettings && activeTrack.getSettings().deviceId) || cameraSelectEl.value;
         setStatus("Camera started. Waiting for redeems or counting the active one.");
-        requestAnimationFrame(renderLoop);
+        if (!renderLoopStarted) {
+          renderLoopStarted = true;
+          requestAnimationFrame(renderLoop);
+        }
       } catch (error) {
         console.error(error);
-        setCameraState("Camera blocked", "bad");
-        const errorMessage = "Camera start failed:" + newline + (error.message || error);
+        setCameraState("Camera unavailable", "bad");
+        const errorMessage = "Camera start/switch failed:" + newline + (error.message || error);
         setStatus(errorMessage);
         showError(errorMessage);
       }
+    }
+
+    async function startCamera() {
+      debugLog("start camera clicked");
+      clearError();
+      await ensurePoseLandmarker();
+      await openCamera(cameraSelectEl.value || "");
     }
 
     function average(values) {
@@ -572,9 +813,12 @@ POPUP_HTML = """<!DOCTYPE html>
       return total / values.length;
     }
 
+    function landmarkVisibility(landmark) {
+      return landmark && landmark.visibility != null ? landmark.visibility : 1;
+    }
+
     function landmarkVisible(landmark) {
-      const visibility = landmark && landmark.visibility != null ? landmark.visibility : 1;
-      return landmark && visibility > 0.45;
+      return landmark && landmarkVisibility(landmark) > 0.35;
     }
 
     function computeKneeAngle(hip, knee, ankle) {
@@ -600,56 +844,98 @@ POPUP_HTML = """<!DOCTYPE html>
       const leftShoulder = landmarks[11];
       const rightShoulder = landmarks[12];
 
-      const required = [leftHip, rightHip, leftKnee, rightKnee, leftAnkle, rightAnkle, leftShoulder, rightShoulder];
-      if (!required.every(landmarkVisible)) {
-        phaseEl.textContent = "Move back so hips, knees, ankles, and shoulders stay visible.";
+      const leftLeg = [leftHip, leftKnee, leftAnkle];
+      const rightLeg = [rightHip, rightKnee, rightAnkle];
+      const leftVisible = leftLeg.every(landmarkVisible);
+      const rightVisible = rightLeg.every(landmarkVisible);
+
+      if ((!leftVisible && !rightVisible) || !landmarkVisible(leftShoulder) || !landmarkVisible(rightShoulder)) {
+        phaseEl.textContent = "Move back so at least one full leg and both shoulders are visible.";
+        angleValueEl.textContent = "--°";
         setPoseState("Pose lost", "bad");
         return;
       }
 
       const leftAngle = computeKneeAngle(leftHip, leftKnee, leftAnkle);
       const rightAngle = computeKneeAngle(rightHip, rightKnee, rightAnkle);
-      const kneeAngle = average([leftAngle, rightAngle]);
+      let kneeAngle;
+      if (leftVisible && rightVisible) {
+        const leftConfidence = average(leftLeg.map(landmarkVisibility));
+        const rightConfidence = average(rightLeg.map(landmarkVisibility));
+        kneeAngle = leftConfidence >= rightConfidence ? leftAngle : rightAngle;
+      } else {
+        kneeAngle = leftVisible ? leftAngle : rightAngle;
+      }
 
-      const hipY = average([leftHip.y, rightHip.y]);
-      const shoulderY = average([leftShoulder.y, rightShoulder.y]);
-      const torsoDrop = hipY - shoulderY;
-      const downNow = kneeAngle < 105 && torsoDrop > 0.16;
-      const upNow = kneeAngle > 150;
+      const downNow = kneeAngle <= downAngleThreshold;
+      const upNow = kneeAngle >= upAngleThreshold;
+      const depthPercent = Math.max(
+        0,
+        Math.min(100, (180 - kneeAngle) / (180 - downAngleThreshold) * 100)
+      );
+      angleValueEl.textContent = Math.round(kneeAngle) + "°";
+      depthFillEl.style.width = depthPercent + "%";
 
       if (cooldownFrames > 0) cooldownFrames -= 1;
 
       if (downNow) {
-        lastDepth = "down";
-        squatPhase = "down";
-        phaseEl.textContent = "Down phase detected. Knee angle " + Math.round(kneeAngle) + "°";
-        setPoseState("Squat depth hit", "");
+        downCandidateFrames += 1;
+        upCandidateFrames = 0;
+        standIndicatorEl.classList.remove("active");
+        downIndicatorEl.classList.add("active");
+        if (downCandidateFrames >= stableFramesRequired) {
+          lastDepth = "down";
+          squatPhase = "down";
+          phaseEl.textContent = "Depth reached. Now stand all the way up to count the rep.";
+          setPoseState("DOWN ✓", "");
+        } else {
+          phaseEl.textContent = "Hold that depth for a moment...";
+          setPoseState("Confirming depth", "warn");
+        }
         return;
       }
 
       if (upNow) {
-        if (lastDepth === "down" && cooldownFrames === 0) {
-          squatCount += 1;
-          cooldownFrames = 12;
-          const target = squatTargetTotal;
-          if (squatCount >= target) {
-            phaseEl.textContent = "Completed " + target + " squats. Nice work.";
-            setStatus("Target reached.");
-            bannerEl.textContent = "Queue finished at " + target + " squats";
-          } else {
-            phaseEl.textContent = "Rep " + squatCount + " counted. Stand tall before the next one.";
+        upCandidateFrames += 1;
+        downCandidateFrames = 0;
+        standIndicatorEl.classList.add("active");
+        downIndicatorEl.classList.remove("active");
+        if (upCandidateFrames >= stableFramesRequired) {
+          if (lastDepth === "down" && cooldownFrames === 0) {
+            squatCount += 1;
+            cooldownFrames = 12;
+            const target = squatTargetTotal;
+            if (squatCount >= target) {
+              phaseEl.textContent = "Completed " + target + " squats. Nice work.";
+              setStatus("Target reached.");
+              bannerEl.textContent = "Queue finished at " + target + " squats";
+              reportSquatComplete(target);
+            } else {
+              phaseEl.textContent = "Rep " + squatCount + " counted. Go down again for the next rep.";
+            }
+            updateCountUi();
           }
-          updateCountUi();
+          lastDepth = "up";
+          squatPhase = "up";
+          setPoseState("STAND ✓", "");
+        } else {
+          phaseEl.textContent = lastDepth === "down"
+            ? "Stand tall and hold briefly to finish the rep..."
+            : "Hold your standing position for calibration...";
+          setPoseState("Confirming stand", "warn");
         }
-        lastDepth = "up";
-        squatPhase = "up";
-        setPoseState("Standing tall", "");
         return;
       }
 
+      downCandidateFrames = 0;
+      upCandidateFrames = 0;
       squatPhase = "transition";
-      phaseEl.textContent = "Tracking movement. Knee angle " + Math.round(kneeAngle) + "°";
-      setPoseState("Tracking pose", "warn");
+      standIndicatorEl.classList.remove("active");
+      downIndicatorEl.classList.remove("active");
+      phaseEl.textContent = lastDepth === "down"
+        ? "Stand " + Math.max(0, Math.ceil(upAngleThreshold - kneeAngle)) + "° taller to finish the rep."
+        : "Go about " + Math.max(0, Math.ceil(kneeAngle - downAngleThreshold)) + "° lower to reach depth.";
+      setPoseState("MIDPOINT", "warn");
     }
 
     async function renderLoop() {
@@ -683,6 +969,27 @@ POPUP_HTML = """<!DOCTYPE html>
       startCamera();
     });
 
+    cameraSelectEl.addEventListener("change", function () {
+      if (!streamStarted || !cameraSelectEl.value) return;
+      clearError();
+      debugLog("switching selected camera");
+      openCamera(cameraSelectEl.value);
+    });
+
+    refreshCamerasButton.addEventListener("click", function () {
+      refreshCameraDevices().catch(function (error) {
+        showError("Could not refresh cameras:" + newline + (error.message || error));
+      });
+    });
+
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener("devicechange", function () {
+        refreshCameraDevices().catch(function (error) {
+          debugLog("camera device refresh failed: " + (error.message || error));
+        });
+      });
+    }
+
     resetButton.addEventListener("click", function () {
       currentJob = null;
       squatTargetTotal = defaultSquatTarget;
@@ -695,6 +1002,9 @@ POPUP_HTML = """<!DOCTYPE html>
 
     updateCountUi();
     debugLog("page script loaded");
+    refreshCameraDevices().catch(function (error) {
+      debugLog("initial camera list unavailable: " + (error.message || error));
+    });
     window.addEventListener("error", function (event) {
       showError("Window error:" + newline + event.message);
     });
@@ -755,6 +1065,13 @@ class RedeemPopupState:
 
 
 POPUP_STATE = RedeemPopupState()
+SOFT_LOCK_STATE = {
+    "locked": False,
+    "sequence": None,
+    "started_at": None,
+    "released_at": None,
+}
+SOFT_LOCK_STATE_LOCK = threading.Lock()
 
 
 def extract_squat_target(reward_title):
@@ -780,11 +1097,136 @@ def maybe_open_popup():
     if now - POPUP_STATE.last_popup_opened_at < 2:
         return
 
+    open_commands = [
+        ["explorer.exe", POPUP_OPEN_URL],
+        ["wslview", POPUP_OPEN_URL],
+        ["xdg-open", POPUP_OPEN_URL],
+        ["open", POPUP_OPEN_URL],
+    ]
+    errors = []
+    for command in open_commands:
+        try:
+            subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            POPUP_STATE.last_popup_opened_at = now
+            print(
+                json.dumps({"popup_opened": True, "command": command[0], "url": POPUP_OPEN_URL}),
+                flush=True,
+            )
+            return
+        except OSError as error:
+            errors.append(f"{command[0]}:{error}")
+
+    print(
+        json.dumps(
+            {
+                "popup_open_error": "no_supported_open_command",
+                "attempts": errors,
+                "url": POPUP_OPEN_URL,
+            }
+        ),
+        flush=True,
+    )
+
+
+def soft_lock_game_windows(popup_job):
+    if not SOFT_LOCK_ENABLED:
+        return {"enabled": False, "locked": False, "reason": "soft_lock_disabled"}
+
+    powershell_script = r"""
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WindowTools {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}
+"@
+
+$targets = @(
+    "League of Legends",
+    "LeagueClient",
+    "LeagueClientUx",
+    "LeagueClientUxRender",
+    "Riot Client",
+    "RiotClientServices"
+)
+
+$matched = @()
+Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
+    $process = $_
+    $isTarget = $targets -contains $process.ProcessName
+    if (-not $isTarget -and $process.MainWindowTitle) {
+        foreach ($target in $targets) {
+            if ($process.MainWindowTitle -like "*$target*") {
+                $isTarget = $true
+                break
+            }
+        }
+    }
+
+    if ($isTarget) {
+        [WindowTools]::ShowWindowAsync($process.MainWindowHandle, 6) | Out-Null
+        $matched += [PSCustomObject]@{
+            process = $process.ProcessName
+            title = $process.MainWindowTitle
+        }
+    }
+}
+
+$matched | ConvertTo-Json -Compress
+"""
+
+    with SOFT_LOCK_STATE_LOCK:
+        SOFT_LOCK_STATE["locked"] = True
+        SOFT_LOCK_STATE["sequence"] = popup_job.get("sequence")
+        SOFT_LOCK_STATE["started_at"] = time.time()
+        SOFT_LOCK_STATE["released_at"] = None
+
     try:
-        subprocess.Popen(["open", POPUP_OPEN_URL])
-        POPUP_STATE.last_popup_opened_at = now
-    except OSError as error:
-        print(json.dumps({"popup_open_error": str(error), "url": POPUP_OPEN_URL}), flush=True)
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powershell_script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as error:
+        return {
+            "enabled": True,
+            "locked": True,
+            "window_action": "failed",
+            "reason": str(error),
+            "sequence": popup_job.get("sequence"),
+        }
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    return {
+        "enabled": True,
+        "locked": True,
+        "window_action": "minimize",
+        "returncode": result.returncode,
+        "matched_windows": stdout,
+        "error": stderr,
+        "sequence": popup_job.get("sequence"),
+    }
+
+
+def release_soft_lock(completion_payload):
+    with SOFT_LOCK_STATE_LOCK:
+        was_locked = SOFT_LOCK_STATE["locked"]
+        SOFT_LOCK_STATE["locked"] = False
+        SOFT_LOCK_STATE["released_at"] = time.time()
+        released_sequence = SOFT_LOCK_STATE["sequence"]
+
+    return {
+        "released": was_locked,
+        "sequence": released_sequence,
+        "completion": completion_payload,
+    }
 
 
 def should_trigger_popup_from_riot_check():
@@ -918,18 +1360,27 @@ def summarize_redemption(payload):
 class EventSubHandler(BaseHTTPRequestHandler):
     seen_message_ids = set()
 
+    def safe_write(self, body):
+        try:
+            self.wfile.write(body)
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            print(json.dumps({"client_disconnected": self.path}), flush=True)
+            return False
+
     def send_json_response(self, status_code, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self.safe_write(body)
 
     def serve_popup_page(self):
         html = (
             POPUP_HTML
             .replace("%POPUP_EVENTS_PATH%", POPUP_EVENTS_PATH)
+            .replace("%SQUAT_COMPLETE_PATH%", SQUAT_COMPLETE_PATH)
             .replace("%DEFAULT_SQUAT_TARGET%", str(DEFAULT_SQUAT_TARGET))
             .replace("%POPUP_VERSION%", POPUP_VERSION)
         ).encode("utf-8")
@@ -960,7 +1411,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "keep-alive")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            self.safe_write(payload)
             return
 
         body = f"id: {event['sequence']}\ndata: {json.dumps(event)}\n\n".encode("utf-8")
@@ -972,7 +1423,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self.safe_write(body)
 
     def do_GET(self):
         parsed_path = urlparse(self.path)
@@ -986,7 +1437,9 @@ class EventSubHandler(BaseHTTPRequestHandler):
                     "reward_id": TARGET_REWARD_ID,
                     "popup_path": POPUP_PATH,
                     "popup_events_path": POPUP_EVENTS_PATH,
+                    "squat_complete_path": SQUAT_COMPLETE_PATH,
                     "auto_open_popup": AUTO_OPEN_POPUP,
+                    "soft_lock_enabled": SOFT_LOCK_ENABLED,
                 },
             )
             return
@@ -1004,6 +1457,18 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == SQUAT_COMPLETE_PATH:
+            raw_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            try:
+                completion_payload = json.loads(raw_body.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                completion_payload = {}
+
+            release_result = release_soft_lock(completion_payload)
+            print(json.dumps({"soft_lock_released": release_result}), flush=True)
+            self.send_json_response(200, {"ok": True, "soft_lock": release_result})
+            return
+
         if parsed_path.path != CALLBACK_PATH:
             self.send_response(404)
             self.end_headers()
@@ -1129,6 +1594,8 @@ class EventSubHandler(BaseHTTPRequestHandler):
                 return
 
             popup_job = POPUP_STATE.publish(matched)
+            soft_lock_result = soft_lock_game_windows(popup_job)
+            print(json.dumps({"soft_lock": soft_lock_result}), flush=True)
             maybe_open_popup()
             print(f"{user_login} redeemed {reward_title}", flush=True)
             print(
