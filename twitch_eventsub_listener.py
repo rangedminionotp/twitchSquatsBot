@@ -25,7 +25,8 @@ MAX_MESSAGE_AGE_SECONDS = 600
 AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
 DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
-POPUP_VERSION = "2026-07-09-soft-lock-1"
+MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "50"))
+POPUP_VERSION = "2026-07-10-session-limit-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
 RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", "python3 script.py")
 SOFT_LOCK_ENABLED = os.environ.get("SOFT_LOCK_ENABLED", "1") == "1"
@@ -1040,16 +1041,53 @@ class RedeemPopupState:
         self.sequence = 0
         self.last_popup_opened_at = 0.0
         self.last_popup_connected_at = 0.0
+        self.session_squats_accepted = 0
+
+    def remaining_session_squats(self):
+        if MAX_SESSION_SQUATS <= 0:
+            return None
+        return max(0, MAX_SESSION_SQUATS - self.session_squats_accepted)
+
+    def can_accept(self, squat_target):
+        remaining = self.remaining_session_squats()
+        if remaining is None:
+            return True, "session_limit_disabled", None
+        if squat_target <= remaining:
+            return True, "within_session_limit", remaining
+        return False, "session_squat_limit_reached", remaining
 
     def publish(self, redemption):
         with self.condition:
+            squat_target = extract_squat_target(redemption.get("reward_title"))
+            can_accept, reason, remaining = self.can_accept(squat_target)
+            if not can_accept:
+                return None, {
+                    "accepted": False,
+                    "reason": reason,
+                    "requested_squats": squat_target,
+                    "session_squats_accepted": self.session_squats_accepted,
+                    "max_session_squats": MAX_SESSION_SQUATS,
+                    "remaining_session_squats": remaining,
+                }
+
             self.sequence += 1
             payload = dict(redemption)
             payload["sequence"] = self.sequence
-            payload["squat_target"] = extract_squat_target(payload.get("reward_title"))
+            payload["squat_target"] = squat_target
+            self.session_squats_accepted += squat_target
+            payload["session_squats_accepted"] = self.session_squats_accepted
+            payload["max_session_squats"] = MAX_SESSION_SQUATS
+            payload["remaining_session_squats"] = self.remaining_session_squats()
             self.current_job = payload
             self.condition.notify_all()
-            return payload
+            return payload, {
+                "accepted": True,
+                "reason": reason,
+                "requested_squats": squat_target,
+                "session_squats_accepted": self.session_squats_accepted,
+                "max_session_squats": MAX_SESSION_SQUATS,
+                "remaining_session_squats": self.remaining_session_squats(),
+            }
 
     def wait_for_next(self, last_seen_sequence, timeout=30.0):
         with self.condition:
@@ -1440,6 +1478,9 @@ class EventSubHandler(BaseHTTPRequestHandler):
                     "squat_complete_path": SQUAT_COMPLETE_PATH,
                     "auto_open_popup": AUTO_OPEN_POPUP,
                     "soft_lock_enabled": SOFT_LOCK_ENABLED,
+                    "max_session_squats": MAX_SESSION_SQUATS,
+                    "session_squats_accepted": POPUP_STATE.session_squats_accepted,
+                    "remaining_session_squats": POPUP_STATE.remaining_session_squats(),
                 },
             )
             return
@@ -1593,7 +1634,29 @@ class EventSubHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            popup_job = POPUP_STATE.publish(matched)
+            popup_job, session_limit = POPUP_STATE.publish(matched)
+            print(json.dumps({"session_limit": session_limit}), flush=True)
+            if popup_job is None:
+                print(
+                    json.dumps(
+                        {
+                            "redeemed": False,
+                            "skipped": True,
+                            "skip_reason": session_limit["reason"],
+                            "user_login": user_login,
+                            "reward_title": reward_title,
+                            "requested_squats": session_limit["requested_squats"],
+                            "session_squats_accepted": session_limit["session_squats_accepted"],
+                            "max_session_squats": session_limit["max_session_squats"],
+                            "remaining_session_squats": session_limit["remaining_session_squats"],
+                        }
+                    ),
+                    flush=True,
+                )
+                self.send_response(204)
+                self.end_headers()
+                return
+
             soft_lock_result = soft_lock_game_windows(popup_job)
             print(json.dumps({"soft_lock": soft_lock_result}), flush=True)
             maybe_open_popup()
@@ -1646,6 +1709,8 @@ def main():
                 "popup_path": POPUP_PATH,
                 "popup_open_url": POPUP_OPEN_URL,
                 "auto_open_popup": AUTO_OPEN_POPUP,
+                "soft_lock_enabled": SOFT_LOCK_ENABLED,
+                "max_session_squats": MAX_SESSION_SQUATS,
             }
         ),
         flush=True,
