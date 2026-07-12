@@ -17,7 +17,11 @@ CALLBACK_PATH = os.environ.get("TWITCH_CALLBACK_PATH", "/eventsub")
 POPUP_PATH = os.environ.get("TWITCH_POPUP_PATH", "/squat-popup")
 POPUP_EVENTS_PATH = os.environ.get("TWITCH_POPUP_EVENTS_PATH", "/popup-events")
 OVERLAY_PATH = os.environ.get("TWITCH_OVERLAY_PATH", "/overlay")
+OVERLAY_REFRESH_PATH = os.environ.get("TWITCH_OVERLAY_REFRESH_PATH", "/overlay-refresh")
+OVERLAY_KEY_PATH = os.environ.get("TWITCH_OVERLAY_KEY_PATH", "/overlay-key")
+OVERLAY_MAGENTA_KEY_PATH = os.environ.get("TWITCH_OVERLAY_MAGENTA_KEY_PATH", "/overlay-magenta-key")
 OVERLAY_EVENTS_PATH = os.environ.get("TWITCH_OVERLAY_EVENTS_PATH", "/overlay-events")
+OVERLAY_STATE_PATH = os.environ.get("TWITCH_OVERLAY_STATE_PATH", "/overlay-state")
 SQUAT_PROGRESS_PATH = os.environ.get("TWITCH_SQUAT_PROGRESS_PATH", "/squat-progress")
 SQUAT_COMPLETE_PATH = os.environ.get("TWITCH_SQUAT_COMPLETE_PATH", "/squat-complete")
 EVENTSUB_SECRET = os.environ.get("TWITCH_EVENTSUB_SECRET", "")
@@ -29,7 +33,7 @@ AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
 DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
 MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "50"))
-POPUP_VERSION = "2026-07-11-browser-source-overlay-1"
+POPUP_VERSION = "2026-07-12-live-progress-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
 RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", "python3 script.py")
 SOFT_LOCK_ENABLED = os.environ.get("SOFT_LOCK_ENABLED", "1") == "1"
@@ -483,6 +487,7 @@ POPUP_HTML = """<!DOCTYPE html>
     let poseScriptsLoaded = false;
     let poseFrameInFlight = false;
     let completionReported = false;
+    let lastProgressSignature = "";
     const downAngleThreshold = 120;
     const upAngleThreshold = 155;
     const stableFramesRequired = 3;
@@ -565,9 +570,10 @@ POPUP_HTML = """<!DOCTYPE html>
       if (tone) cameraStateEl.classList.add(tone);
     }
 
-    function updateCountUi() {
+    function updateCountUi(progressStatus, forceProgressReport) {
       countEl.textContent = String(squatCount);
       targetEl.textContent = "Target " + squatTargetTotal + " squats";
+      maybeReportSquatProgress(progressStatus || "active", forceProgressReport);
     }
 
     function resetCounter() {
@@ -626,8 +632,7 @@ POPUP_HTML = """<!DOCTYPE html>
       if (squatCount < squatTargetTotal) {
         completionReported = false;
       }
-      updateCountUi();
-      reportSquatProgress("active");
+      updateCountUi("active", true);
       window.focus();
     }
 
@@ -684,6 +689,22 @@ POPUP_HTML = """<!DOCTYPE html>
       } catch (error) {
         debugLog("could not report squat progress: " + (error.message || error));
       }
+    }
+
+    function maybeReportSquatProgress(status, force) {
+      if (!currentJob) return;
+      const payloadStatus = status || "active";
+      const signature = [
+        payloadStatus,
+        currentJob.sequence || "",
+        squatCount,
+        squatTargetTotal,
+        currentJob.user_login || "",
+        currentJob.reward_title || "",
+      ].join(":");
+      if (!force && signature === lastProgressSignature) return;
+      lastProgressSignature = signature;
+      reportSquatProgress(payloadStatus);
     }
 
     function onPoseResults(results) {
@@ -992,13 +1013,12 @@ POPUP_HTML = """<!DOCTYPE html>
               phaseEl.textContent = "Completed " + target + " squats. Nice work.";
               setStatus("Target reached.");
               bannerEl.textContent = "Queue finished at " + target + " squats";
-              reportSquatProgress("complete");
+              updateCountUi("complete", true);
               reportSquatComplete(target);
             } else {
               phaseEl.textContent = "Rep " + squatCount + " counted. Go down again for the next rep.";
-              reportSquatProgress("active");
+              updateCountUi("active", true);
             }
-            updateCountUi();
           }
           lastDepth = "up";
           squatPhase = "up";
@@ -1257,7 +1277,7 @@ OVERLAY_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <main id="overlay" class="overlay">
+  <main id="overlay" class="overlay visible">
     <div class="top-row">
       <div>
         <div class="eyebrow">Live Redeem Challenge</div>
@@ -1281,6 +1301,7 @@ OVERLAY_HTML = """<!DOCTYPE html>
   </main>
   <script>
     const overlayEventsPath = "%OVERLAY_EVENTS_PATH%";
+    const overlayStatePath = "%OVERLAY_STATE_PATH%";
     const overlayEl = document.getElementById("overlay");
     const lockPillEl = document.getElementById("lockPill");
     const messageEl = document.getElementById("message");
@@ -1291,6 +1312,7 @@ OVERLAY_HTML = """<!DOCTYPE html>
     const viewerEl = document.getElementById("viewer");
     const statusEl = document.getElementById("status");
     let hideTimer = null;
+    let lastOverlaySignature = "";
 
     function showOverlay() {
       overlayEl.classList.add("visible");
@@ -1301,18 +1323,29 @@ OVERLAY_HTML = """<!DOCTYPE html>
     }
 
     function maybeHideOverlay(state) {
-      if (state.status !== "complete" && state.status !== "idle") return;
-      if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(function () {
-        overlayEl.classList.remove("visible");
-      }, 12000);
+      return;
     }
 
     function updateOverlay(state) {
+      if (!state || !state.status) return;
+      const stateSignature = [
+        state.sequence || "",
+        state.status || "",
+        state.locked ? "1" : "0",
+        state.user_login || "",
+        state.user_name || "",
+        state.reward_title || "",
+        state.squat_count || 0,
+        state.squat_target || 0,
+        state.progress_updated_at || "",
+      ].join("|");
+      if (stateSignature === lastOverlaySignature) return;
+      lastOverlaySignature = stateSignature;
+
       const squatCount = Number(state.squat_count || 0);
       const squatTarget = Number(state.squat_target || 0);
       const percent = squatTarget > 0 ? Math.min(100, Math.round(squatCount / squatTarget * 100)) : 0;
-      const viewer = state.user_name || state.user_login || "viewer";
+      const viewer = state.user_name || state.user_login || "No active viewer";
       const reward = state.reward_title || "squat redeem";
 
       countEl.textContent = String(squatCount);
@@ -1352,9 +1385,26 @@ OVERLAY_HTML = """<!DOCTYPE html>
       eventSource.onmessage = function (message) {
         updateOverlay(JSON.parse(message.data));
       };
+      eventSource.onerror = function () {
+        pollOverlayState();
+      };
+    }
+
+    async function pollOverlayState() {
+      try {
+        const response = await fetch(overlayStatePath + "?_=" + Date.now(), {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        updateOverlay(await response.json());
+      } catch (error) {
+        // Streamlabs browser sources can be noisy; the next poll will try again.
+      }
     }
 
     connectOverlayEvents();
+    pollOverlayState();
+    setInterval(pollOverlayState, 1000);
   </script>
 </body>
 </html>
@@ -1369,6 +1419,9 @@ class RedeemPopupState:
         self.last_popup_opened_at = 0.0
         self.last_popup_connected_at = 0.0
         self.session_squats_accepted = 0
+        self.current_squat_count = 0
+        self.current_squat_target = 0
+        self.last_progress_at = 0.0
 
     def remaining_session_squats(self):
         if MAX_SESSION_SQUATS <= 0:
@@ -1403,8 +1456,10 @@ class RedeemPopupState:
             payload["squat_target"] = squat_target
             self.session_squats_accepted += squat_target
             payload["session_squats_accepted"] = self.session_squats_accepted
+            payload["queue_squat_target"] = self.session_squats_accepted
             payload["max_session_squats"] = MAX_SESSION_SQUATS
             payload["remaining_session_squats"] = self.remaining_session_squats()
+            self.current_squat_target = self.session_squats_accepted
             self.current_job = payload
             self.condition.notify_all()
             return payload, {
@@ -1412,8 +1467,46 @@ class RedeemPopupState:
                 "reason": reason,
                 "requested_squats": squat_target,
                 "session_squats_accepted": self.session_squats_accepted,
+                "queue_squat_target": self.session_squats_accepted,
                 "max_session_squats": MAX_SESSION_SQUATS,
                 "remaining_session_squats": self.remaining_session_squats(),
+            }
+
+    def record_progress(self, progress_payload, squat_target=None):
+        with self.condition:
+            try:
+                squat_count = max(0, int(progress_payload.get("squat_count", 0)))
+            except (TypeError, ValueError):
+                squat_count = self.current_squat_count
+
+            if squat_target is None:
+                reported_target = progress_payload.get("squat_target", self.current_squat_target)
+                try:
+                    squat_target = int(reported_target)
+                except (TypeError, ValueError):
+                    squat_target = self.current_squat_target
+
+            squat_target = max(
+                0,
+                int(squat_target or 0),
+                int(self.session_squats_accepted or 0),
+                int(self.current_squat_target or 0),
+            )
+            self.current_squat_count = min(squat_count, squat_target) if squat_target else squat_count
+            self.current_squat_target = squat_target
+            self.last_progress_at = time.time()
+            return {
+                "squat_count": self.current_squat_count,
+                "squat_target": self.current_squat_target,
+                "progress_updated_at": self.last_progress_at,
+            }
+
+    def progress_snapshot(self):
+        with self.condition:
+            return {
+                "squat_count": self.current_squat_count,
+                "squat_target": self.current_squat_target,
+                "progress_updated_at": self.last_progress_at,
             }
 
     def wait_for_next(self, last_seen_sequence, timeout=30.0):
@@ -1642,6 +1735,12 @@ def release_soft_lock(completion_payload):
 
 def publish_overlay_active(popup_job, soft_lock_result=None):
     locked = bool(soft_lock_result and soft_lock_result.get("locked"))
+    queued_target = (
+        popup_job.get("queue_squat_target")
+        or popup_job.get("session_squats_accepted")
+        or popup_job.get("squat_target")
+        or DEFAULT_SQUAT_TARGET
+    )
     return OVERLAY_STATE.publish(
         {
             "status": "active",
@@ -1650,7 +1749,7 @@ def publish_overlay_active(popup_job, soft_lock_result=None):
             "user_name": popup_job.get("user_name"),
             "reward_title": popup_job.get("reward_title"),
             "squat_count": 0,
-            "squat_target": popup_job.get("squat_target", DEFAULT_SQUAT_TARGET),
+            "squat_target": queued_target,
             "message": "Redeem received. Squat challenge started.",
             "session_squats_accepted": popup_job.get("session_squats_accepted"),
             "max_session_squats": popup_job.get("max_session_squats"),
@@ -1663,6 +1762,12 @@ def publish_overlay_progress(progress_payload):
     status = progress_payload.get("status") or "active"
     with SOFT_LOCK_STATE_LOCK:
         locked = status == "active" and bool(SOFT_LOCK_STATE["locked"])
+    reported_target = progress_payload.get("squat_target", DEFAULT_SQUAT_TARGET)
+    try:
+        squat_target = max(int(reported_target), int(POPUP_STATE.session_squats_accepted))
+    except (TypeError, ValueError):
+        squat_target = POPUP_STATE.session_squats_accepted or DEFAULT_SQUAT_TARGET
+    progress_state = POPUP_STATE.record_progress(progress_payload, squat_target)
 
     return OVERLAY_STATE.publish(
         {
@@ -1671,9 +1776,10 @@ def publish_overlay_progress(progress_payload):
             "user_login": progress_payload.get("user_login"),
             "user_name": progress_payload.get("user_name"),
             "reward_title": progress_payload.get("reward_title"),
-            "squat_count": progress_payload.get("squat_count", 0),
-            "squat_target": progress_payload.get("squat_target", DEFAULT_SQUAT_TARGET),
+            "squat_count": progress_state["squat_count"],
+            "squat_target": progress_state["squat_target"],
             "message": "Squat progress updated.",
+            "progress_updated_at": progress_state["progress_updated_at"],
         }
     )
 
@@ -1691,6 +1797,213 @@ def publish_overlay_skipped(reason, user_login=None, reward_title=None):
             "message": f"Redeem skipped: {reason}",
         }
     )
+
+
+def html_escape(value):
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
+def build_refresh_overlay_html(page_background="rgba(0, 0, 0, 0)"):
+    state = OVERLAY_STATE.snapshot()
+    if state.get("status") in ("active", "complete"):
+        state.update(POPUP_STATE.progress_snapshot())
+    status = state.get("status") or "idle"
+    viewer = state.get("user_name") or state.get("user_login") or "No active viewer"
+    reward = state.get("reward_title") or "squat redeem"
+    squat_count = int(state.get("squat_count") or 0)
+    squat_target = int(state.get("squat_target") or 0)
+    percent = min(100, round(squat_count / squat_target * 100)) if squat_target > 0 else 0
+
+    if status == "complete":
+        pill = "Unlocked"
+        pill_class = "pill complete"
+        message = f"{viewer}'s challenge is complete."
+        footer_status = "Complete"
+    elif status == "active":
+        pill = "Locked" if state.get("locked") else "Active"
+        pill_class = "pill"
+        message = f"{viewer} redeemed {reward}."
+        footer_status = "In Progress"
+    elif status == "skipped":
+        pill = "Skipped"
+        pill_class = "pill"
+        message = state.get("message") or "Redeem skipped."
+        footer_status = "Skipped"
+    else:
+        pill = "Waiting"
+        pill_class = "pill"
+        message = "Waiting for a channel point redeem..."
+        footer_status = "Idle"
+
+    visible_class = "visible"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twitch Squat Overlay Refresh</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    :root {{
+      background: {page_background} !important;
+    }}
+    html, body {{
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: {page_background} !important;
+      color: #f7fbff;
+      font-family: ui-rounded, "SF Pro Rounded", "Avenir Next", "Trebuchet MS", sans-serif;
+    }}
+    .overlay {{
+      position: fixed;
+      left: 28px;
+      bottom: 28px;
+      width: 430px;
+      padding: 18px 20px;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(102, 240, 201, 0.22), transparent 42%),
+        linear-gradient(145deg, rgba(16, 21, 36, 0.86), rgba(10, 13, 22, 0.76));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(12px);
+      opacity: 0;
+    }}
+    .overlay.visible {{ opacity: 1; }}
+    .top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }}
+    .eyebrow {{ color: #66f0c9; font-size: 12px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; }}
+    h1 {{ margin: 4px 0 0; font-size: 28px; line-height: 1; }}
+    .pill {{ border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(255, 179, 71, 0.14); border: 1px solid rgba(255, 179, 71, 0.38); color: #ffd89b; }}
+    .pill.complete {{ background: rgba(102, 240, 201, 0.14); border-color: rgba(102, 240, 201, 0.42); color: #a8ffe9; }}
+    .message {{ margin: 0 0 14px; color: #b7c3d8; font-size: 15px; line-height: 1.35; font-weight: 800; }}
+    .count-row {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }}
+    .count {{ font-size: 54px; line-height: 0.9; font-weight: 1000; letter-spacing: -0.04em; }}
+    .target {{ color: #b7c3d8; font-size: 15px; font-weight: 800; }}
+    .bar {{ height: 14px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.08); }}
+    .fill {{ height: 100%; width: {percent}%; border-radius: inherit; background: linear-gradient(90deg, #66f0c9, #ffb347); box-shadow: 0 0 22px rgba(102, 240, 201, 0.55); }}
+    .footer {{ display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; color: rgba(247, 251, 255, 0.72); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }}
+  </style>
+</head>
+<body>
+  <main id="overlay" class="overlay {visible_class}">
+    <div class="top">
+      <div>
+        <div class="eyebrow">Live Redeem Challenge</div>
+        <h1>Squat Lock</h1>
+      </div>
+      <div id="pill" class="{pill_class}">{html_escape(pill)}</div>
+    </div>
+    <p id="message" class="message">{html_escape(message)}</p>
+    <div class="count-row">
+      <div>
+        <div id="count" class="count">{squat_count}</div>
+        <div id="target" class="target">of {squat_target} squats</div>
+      </div>
+      <div id="percent" class="target">{percent}%</div>
+    </div>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+    <div class="footer">
+      <span id="viewer">{html_escape(viewer)}</span>
+      <span id="footerStatus">{html_escape(footer_status)}</span>
+    </div>
+  </main>
+  <script>
+    const overlayStatePath = "{OVERLAY_STATE_PATH}";
+    const overlayEl = document.getElementById("overlay");
+    const pillEl = document.getElementById("pill");
+    const messageEl = document.getElementById("message");
+    const countEl = document.getElementById("count");
+    const targetEl = document.getElementById("target");
+    const percentEl = document.getElementById("percent");
+    const fillEl = document.getElementById("fill");
+    const viewerEl = document.getElementById("viewer");
+    const footerStatusEl = document.getElementById("footerStatus");
+    let lastSignature = "";
+
+    function setText(element, text) {{
+      element.textContent = text == null ? "" : String(text);
+    }}
+
+    function updateOverlay(state) {{
+      if (!state || !state.status) return;
+      const stateSignature = [
+        state.sequence || "",
+        state.status || "",
+        state.locked ? "1" : "0",
+        state.user_login || "",
+        state.user_name || "",
+        state.reward_title || "",
+        state.squat_count || 0,
+        state.squat_target || 0,
+        state.progress_updated_at || "",
+      ].join("|");
+      if (stateSignature === lastSignature) return;
+      lastSignature = stateSignature;
+
+      const status = state.status || "idle";
+      const viewer = state.user_name || state.user_login || "No active viewer";
+      const reward = state.reward_title || "squat redeem";
+      const squatCount = Number(state.squat_count || 0);
+      const squatTarget = Number(state.squat_target || 0);
+      const progress = squatTarget > 0 ? Math.min(100, Math.round(squatCount / squatTarget * 100)) : 0;
+
+      overlayEl.classList.add("visible");
+      setText(countEl, squatCount);
+      setText(targetEl, "of " + squatTarget + " squats");
+      setText(percentEl, progress + "%");
+      fillEl.style.width = progress + "%";
+      setText(viewerEl, viewer);
+
+      if (status === "complete") {{
+        setText(pillEl, "Unlocked");
+        pillEl.className = "pill complete";
+        setText(messageEl, viewer + "'s challenge is complete.");
+        setText(footerStatusEl, "Complete");
+      }} else if (status === "active") {{
+        setText(pillEl, state.locked ? "Locked" : "Active");
+        pillEl.className = "pill";
+        setText(messageEl, viewer + " redeemed " + reward + ".");
+        setText(footerStatusEl, "In Progress");
+      }} else if (status === "skipped") {{
+        setText(pillEl, "Skipped");
+        pillEl.className = "pill";
+        setText(messageEl, state.message || "Redeem skipped.");
+        setText(footerStatusEl, "Skipped");
+      }} else {{
+        setText(pillEl, "Waiting");
+        pillEl.className = "pill";
+        setText(messageEl, "Waiting for a channel point redeem...");
+        setText(footerStatusEl, "Idle");
+      }}
+    }}
+
+    async function pollOverlayState() {{
+      try {{
+        const response = await fetch(overlayStatePath + "?_=" + Date.now(), {{
+          cache: "no-store",
+        }});
+        if (!response.ok) return;
+        updateOverlay(await response.json());
+      }} catch (error) {{
+        // Try again on the next interval.
+      }}
+    }}
+
+    pollOverlayState();
+    setInterval(pollOverlayState, 1000);
+  </script>
+</body>
+</html>
+"""
 
 
 def should_trigger_popup_from_riot_check():
@@ -1836,6 +2149,9 @@ class EventSubHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.safe_write(body)
@@ -1862,7 +2178,41 @@ class EventSubHandler(BaseHTTPRequestHandler):
         html = (
             OVERLAY_HTML
             .replace("%OVERLAY_EVENTS_PATH%", OVERLAY_EVENTS_PATH)
+            .replace("%OVERLAY_STATE_PATH%", OVERLAY_STATE_PATH)
         ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.safe_write(html)
+
+    def serve_overlay_refresh_page(self):
+        html = build_refresh_overlay_html().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.safe_write(html)
+
+    def serve_overlay_key_page(self):
+        html = build_refresh_overlay_html("#00ff00").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.safe_write(html)
+
+    def serve_overlay_magenta_key_page(self):
+        html = build_refresh_overlay_html("#ff00ff").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -1904,6 +2254,19 @@ class EventSubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.safe_write(body)
+
+    def serve_overlay_state(self):
+        state = OVERLAY_STATE.snapshot()
+        if state.get("status") in ("active", "complete"):
+            progress_state = POPUP_STATE.progress_snapshot()
+            state.update(
+                {
+                    "squat_count": progress_state["squat_count"],
+                    "squat_target": progress_state["squat_target"],
+                    "progress_updated_at": progress_state["progress_updated_at"],
+                }
+            )
+        self.send_json_response(200, state)
 
     def serve_popup_events(self):
         last_event_id = self.headers.get("Last-Event-ID", "0")
@@ -1950,7 +2313,11 @@ class EventSubHandler(BaseHTTPRequestHandler):
                     "popup_path": POPUP_PATH,
                     "popup_events_path": POPUP_EVENTS_PATH,
                     "overlay_path": OVERLAY_PATH,
+                    "overlay_refresh_path": OVERLAY_REFRESH_PATH,
+                    "overlay_key_path": OVERLAY_KEY_PATH,
+                    "overlay_magenta_key_path": OVERLAY_MAGENTA_KEY_PATH,
                     "overlay_events_path": OVERLAY_EVENTS_PATH,
+                    "overlay_state_path": OVERLAY_STATE_PATH,
                     "squat_progress_path": SQUAT_PROGRESS_PATH,
                     "squat_complete_path": SQUAT_COMPLETE_PATH,
                     "auto_open_popup": AUTO_OPEN_POPUP,
@@ -1974,8 +2341,24 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.serve_overlay_page()
             return
 
+        if parsed_path.path == OVERLAY_REFRESH_PATH:
+            self.serve_overlay_refresh_page()
+            return
+
+        if parsed_path.path == OVERLAY_KEY_PATH:
+            self.serve_overlay_key_page()
+            return
+
+        if parsed_path.path == OVERLAY_MAGENTA_KEY_PATH:
+            self.serve_overlay_magenta_key_page()
+            return
+
         if parsed_path.path == OVERLAY_EVENTS_PATH:
             self.serve_overlay_events()
+            return
+
+        if parsed_path.path == OVERLAY_STATE_PATH:
+            self.serve_overlay_state()
             return
 
         self.send_response(404)
@@ -2216,6 +2599,9 @@ def main():
                 "popup_path": POPUP_PATH,
                 "overlay_path": OVERLAY_PATH,
                 "overlay_url": f"http://127.0.0.1:{PORT}{OVERLAY_PATH}",
+                "overlay_refresh_url": f"http://127.0.0.1:{PORT}{OVERLAY_REFRESH_PATH}",
+                "overlay_key_url": f"http://127.0.0.1:{PORT}{OVERLAY_KEY_PATH}",
+                "overlay_magenta_key_url": f"http://127.0.0.1:{PORT}{OVERLAY_MAGENTA_KEY_PATH}",
                 "popup_open_url": POPUP_OPEN_URL,
                 "auto_open_popup": AUTO_OPEN_POPUP,
                 "soft_lock_enabled": SOFT_LOCK_ENABLED,
