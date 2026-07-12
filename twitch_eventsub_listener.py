@@ -16,6 +16,9 @@ PORT = int(os.environ.get("PORT", "8080"))
 CALLBACK_PATH = os.environ.get("TWITCH_CALLBACK_PATH", "/eventsub")
 POPUP_PATH = os.environ.get("TWITCH_POPUP_PATH", "/squat-popup")
 POPUP_EVENTS_PATH = os.environ.get("TWITCH_POPUP_EVENTS_PATH", "/popup-events")
+OVERLAY_PATH = os.environ.get("TWITCH_OVERLAY_PATH", "/overlay")
+OVERLAY_EVENTS_PATH = os.environ.get("TWITCH_OVERLAY_EVENTS_PATH", "/overlay-events")
+SQUAT_PROGRESS_PATH = os.environ.get("TWITCH_SQUAT_PROGRESS_PATH", "/squat-progress")
 SQUAT_COMPLETE_PATH = os.environ.get("TWITCH_SQUAT_COMPLETE_PATH", "/squat-complete")
 EVENTSUB_SECRET = os.environ.get("TWITCH_EVENTSUB_SECRET", "")
 BROADCASTER_LOGIN = "nannersowo"
@@ -26,7 +29,7 @@ AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
 DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
 MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "50"))
-POPUP_VERSION = "2026-07-10-session-limit-1"
+POPUP_VERSION = "2026-07-11-browser-source-overlay-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
 RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", "python3 script.py")
 SOFT_LOCK_ENABLED = os.environ.get("SOFT_LOCK_ENABLED", "1") == "1"
@@ -420,6 +423,7 @@ POPUP_HTML = """<!DOCTYPE html>
   <script>
     async function initPopupPage() {
     const popupEventsPath = "%POPUP_EVENTS_PATH%";
+    const squatProgressPath = "%SQUAT_PROGRESS_PATH%";
     const squatCompletePath = "%SQUAT_COMPLETE_PATH%";
     const defaultSquatTarget = Number("%DEFAULT_SQUAT_TARGET%") || 10;
     const mediaPipeScriptGroups = [
@@ -623,6 +627,7 @@ POPUP_HTML = """<!DOCTYPE html>
         completionReported = false;
       }
       updateCountUi();
+      reportSquatProgress("active");
       window.focus();
     }
 
@@ -652,6 +657,32 @@ POPUP_HTML = """<!DOCTYPE html>
       } catch (error) {
         completionReported = false;
         showError("Could not report squat completion:" + newline + (error.message || error));
+      }
+    }
+
+    async function reportSquatProgress(status) {
+      const payload = {
+        status: status || "active",
+        sequence: currentJob ? currentJob.sequence : null,
+        user_login: currentJob ? currentJob.user_login : null,
+        user_name: currentJob ? currentJob.user_name : null,
+        reward_title: currentJob ? currentJob.reward_title : null,
+        squat_count: squatCount,
+        squat_target: squatTargetTotal,
+      };
+      try {
+        const response = await fetch(squatProgressPath, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+      } catch (error) {
+        debugLog("could not report squat progress: " + (error.message || error));
       }
     }
 
@@ -762,23 +793,74 @@ POPUP_HTML = """<!DOCTYPE html>
       debugLog("found " + cameras.length + " camera device(s)");
     }
 
+    function getCameraConstraintAttempts(deviceId) {
+      if (deviceId) {
+        return [
+          {
+            label: "selected camera at preferred HD",
+            video: {
+              deviceId: { exact: deviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          {
+            label: "selected camera without resolution constraints",
+            video: {
+              deviceId: { exact: deviceId },
+            },
+          },
+          {
+            label: "selected camera with flexible device match",
+            video: {
+              deviceId: { ideal: deviceId },
+            },
+          },
+        ];
+      }
+
+      return [
+        {
+          label: "default front camera at preferred HD",
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        },
+        {
+          label: "default camera without constraints",
+          video: true,
+        },
+      ];
+    }
+
     async function openCamera(deviceId) {
       try {
         setCameraState("Switching camera...", "warn");
-        const videoConstraints = {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        };
-        if (deviceId) {
-          videoConstraints.deviceId = { exact: deviceId };
-        } else {
-          videoConstraints.facingMode = "user";
+        const attempts = getCameraConstraintAttempts(deviceId);
+        const errors = [];
+        let newStream = null;
+        for (let index = 0; index < attempts.length; index += 1) {
+          const attempt = attempts[index];
+          try {
+            debugLog("trying camera: " + attempt.label);
+            newStream = await navigator.mediaDevices.getUserMedia({
+              video: attempt.video,
+              audio: false,
+            });
+            debugLog("camera opened with: " + attempt.label);
+            break;
+          } catch (attemptError) {
+            errors.push(attempt.label + " -> " + (attemptError.name || "Error") + ": " + (attemptError.message || attemptError));
+            debugLog("camera attempt failed: " + errors[errors.length - 1]);
+          }
         }
 
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: false,
-        });
+        if (!newStream) {
+          throw new Error(errors.join(newline));
+        }
+
         stopCameraStream();
         cameraStream = newStream;
         video.srcObject = cameraStream;
@@ -910,9 +992,11 @@ POPUP_HTML = """<!DOCTYPE html>
               phaseEl.textContent = "Completed " + target + " squats. Nice work.";
               setStatus("Target reached.");
               bannerEl.textContent = "Queue finished at " + target + " squats";
+              reportSquatProgress("complete");
               reportSquatComplete(target);
             } else {
               phaseEl.textContent = "Rep " + squatCount + " counted. Go down again for the next rep.";
+              reportSquatProgress("active");
             }
             updateCountUi();
           }
@@ -1033,6 +1117,249 @@ POPUP_HTML = """<!DOCTYPE html>
 </html>
 """
 
+OVERLAY_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twitch Squat Overlay</title>
+  <style>
+    :root {
+      --accent: #66f0c9;
+      --accent-2: #ffb347;
+      --danger: #ff6b8a;
+      --text: #f7fbff;
+      --muted: #b7c3d8;
+      --panel: rgba(12, 16, 28, 0.78);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      color: var(--text);
+      font-family: ui-rounded, "SF Pro Rounded", "Avenir Next", "Trebuchet MS", sans-serif;
+    }
+    .overlay {
+      position: fixed;
+      left: 28px;
+      bottom: 28px;
+      width: 430px;
+      padding: 18px 20px;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(102, 240, 201, 0.22), transparent 42%),
+        linear-gradient(145deg, rgba(16, 21, 36, 0.86), rgba(10, 13, 22, 0.76));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(12px);
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+    .overlay.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .top-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 4px 0 0;
+      font-size: 28px;
+      line-height: 1;
+      text-shadow: 0 3px 22px rgba(0, 0, 0, 0.5);
+    }
+    .lock-pill {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(255, 179, 71, 0.14);
+      border: 1px solid rgba(255, 179, 71, 0.38);
+      color: #ffd89b;
+    }
+    .lock-pill.complete {
+      background: rgba(102, 240, 201, 0.14);
+      border-color: rgba(102, 240, 201, 0.42);
+      color: #a8ffe9;
+    }
+    .message {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.35;
+    }
+    .viewer {
+      color: var(--text);
+      font-weight: 900;
+    }
+    .count-row {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+    .count {
+      font-size: 54px;
+      line-height: 0.9;
+      font-weight: 1000;
+      letter-spacing: -0.04em;
+    }
+    .target {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .bar {
+      height: 14px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      box-shadow: 0 0 22px rgba(102, 240, 201, 0.55);
+      transition: width 260ms ease;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      color: rgba(247, 251, 255, 0.72);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+  </style>
+</head>
+<body>
+  <main id="overlay" class="overlay">
+    <div class="top-row">
+      <div>
+        <div class="eyebrow">Live Redeem Challenge</div>
+        <h1>Squat Lock</h1>
+      </div>
+      <div id="lockPill" class="lock-pill">Waiting</div>
+    </div>
+    <p id="message" class="message">Waiting for a channel point redeem...</p>
+    <div class="count-row">
+      <div>
+        <div id="count" class="count">0</div>
+        <div id="target" class="target">of 0 squats</div>
+      </div>
+      <div id="percent" class="target">0%</div>
+    </div>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+    <div class="footer">
+      <span id="viewer">No active viewer</span>
+      <span id="status">Idle</span>
+    </div>
+  </main>
+  <script>
+    const overlayEventsPath = "%OVERLAY_EVENTS_PATH%";
+    const overlayEl = document.getElementById("overlay");
+    const lockPillEl = document.getElementById("lockPill");
+    const messageEl = document.getElementById("message");
+    const countEl = document.getElementById("count");
+    const targetEl = document.getElementById("target");
+    const percentEl = document.getElementById("percent");
+    const fillEl = document.getElementById("fill");
+    const viewerEl = document.getElementById("viewer");
+    const statusEl = document.getElementById("status");
+    let hideTimer = null;
+
+    function showOverlay() {
+      overlayEl.classList.add("visible");
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    }
+
+    function maybeHideOverlay(state) {
+      if (state.status !== "complete" && state.status !== "idle") return;
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () {
+        overlayEl.classList.remove("visible");
+      }, 12000);
+    }
+
+    function updateOverlay(state) {
+      const squatCount = Number(state.squat_count || 0);
+      const squatTarget = Number(state.squat_target || 0);
+      const percent = squatTarget > 0 ? Math.min(100, Math.round(squatCount / squatTarget * 100)) : 0;
+      const viewer = state.user_name || state.user_login || "viewer";
+      const reward = state.reward_title || "squat redeem";
+
+      countEl.textContent = String(squatCount);
+      targetEl.textContent = "of " + squatTarget + " squats";
+      percentEl.textContent = percent + "%";
+      fillEl.style.width = percent + "%";
+      viewerEl.textContent = viewer;
+
+      if (state.status === "complete") {
+        lockPillEl.textContent = "Unlocked";
+        lockPillEl.classList.add("complete");
+        statusEl.textContent = "Complete";
+        messageEl.innerHTML = "<span class='viewer'>" + viewer + "</span>'s challenge is complete.";
+      } else if (state.status === "active") {
+        lockPillEl.textContent = state.locked ? "Locked" : "Active";
+        lockPillEl.classList.remove("complete");
+        statusEl.textContent = "In Progress";
+        messageEl.innerHTML = "<span class='viewer'>" + viewer + "</span> redeemed " + reward + ".";
+      } else if (state.status === "skipped") {
+        lockPillEl.textContent = "Skipped";
+        lockPillEl.classList.remove("complete");
+        statusEl.textContent = "Skipped";
+        messageEl.textContent = state.message || "Redeem skipped.";
+      } else {
+        lockPillEl.textContent = "Waiting";
+        lockPillEl.classList.remove("complete");
+        statusEl.textContent = "Idle";
+        messageEl.textContent = "Waiting for a channel point redeem...";
+      }
+
+      showOverlay();
+      maybeHideOverlay(state);
+    }
+
+    function connectOverlayEvents() {
+      const eventSource = new EventSource(overlayEventsPath);
+      eventSource.onmessage = function (message) {
+        updateOverlay(JSON.parse(message.data));
+      };
+    }
+
+    connectOverlayEvents();
+  </script>
+</body>
+</html>
+"""
+
 
 class RedeemPopupState:
     def __init__(self):
@@ -1103,6 +1430,52 @@ class RedeemPopupState:
 
 
 POPUP_STATE = RedeemPopupState()
+
+
+class ChallengeOverlayState:
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.sequence = 0
+        self.state = {
+            "status": "idle",
+            "locked": False,
+            "user_login": None,
+            "user_name": None,
+            "reward_title": None,
+            "squat_count": 0,
+            "squat_target": 0,
+            "message": "Waiting for a channel point redeem.",
+            "updated_at": time.time(),
+        }
+
+    def publish(self, updates):
+        with self.condition:
+            self.sequence += 1
+            self.state.update(updates)
+            self.state["sequence"] = self.sequence
+            self.state["updated_at"] = time.time()
+            snapshot = dict(self.state)
+            self.condition.notify_all()
+            return snapshot
+
+    def snapshot(self):
+        with self.condition:
+            snapshot = dict(self.state)
+            snapshot["sequence"] = self.sequence
+            return snapshot
+
+    def wait_for_next(self, last_seen_sequence, timeout=25.0):
+        with self.condition:
+            if self.sequence > last_seen_sequence:
+                return dict(self.state)
+
+            self.condition.wait(timeout)
+            if self.sequence > last_seen_sequence:
+                return dict(self.state)
+            return None
+
+
+OVERLAY_STATE = ChallengeOverlayState()
 SOFT_LOCK_STATE = {
     "locked": False,
     "sequence": None,
@@ -1267,6 +1640,59 @@ def release_soft_lock(completion_payload):
     }
 
 
+def publish_overlay_active(popup_job, soft_lock_result=None):
+    locked = bool(soft_lock_result and soft_lock_result.get("locked"))
+    return OVERLAY_STATE.publish(
+        {
+            "status": "active",
+            "locked": locked,
+            "user_login": popup_job.get("user_login"),
+            "user_name": popup_job.get("user_name"),
+            "reward_title": popup_job.get("reward_title"),
+            "squat_count": 0,
+            "squat_target": popup_job.get("squat_target", DEFAULT_SQUAT_TARGET),
+            "message": "Redeem received. Squat challenge started.",
+            "session_squats_accepted": popup_job.get("session_squats_accepted"),
+            "max_session_squats": popup_job.get("max_session_squats"),
+            "remaining_session_squats": popup_job.get("remaining_session_squats"),
+        }
+    )
+
+
+def publish_overlay_progress(progress_payload):
+    status = progress_payload.get("status") or "active"
+    with SOFT_LOCK_STATE_LOCK:
+        locked = status == "active" and bool(SOFT_LOCK_STATE["locked"])
+
+    return OVERLAY_STATE.publish(
+        {
+            "status": status,
+            "locked": locked,
+            "user_login": progress_payload.get("user_login"),
+            "user_name": progress_payload.get("user_name"),
+            "reward_title": progress_payload.get("reward_title"),
+            "squat_count": progress_payload.get("squat_count", 0),
+            "squat_target": progress_payload.get("squat_target", DEFAULT_SQUAT_TARGET),
+            "message": "Squat progress updated.",
+        }
+    )
+
+
+def publish_overlay_skipped(reason, user_login=None, reward_title=None):
+    return OVERLAY_STATE.publish(
+        {
+            "status": "skipped",
+            "locked": False,
+            "user_login": user_login,
+            "user_name": user_login,
+            "reward_title": reward_title,
+            "squat_count": 0,
+            "squat_target": 0,
+            "message": f"Redeem skipped: {reason}",
+        }
+    )
+
+
 def should_trigger_popup_from_riot_check():
     if not RIOT_CHECK_ENABLED:
         return True, "riot_check_disabled"
@@ -1418,6 +1844,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
         html = (
             POPUP_HTML
             .replace("%POPUP_EVENTS_PATH%", POPUP_EVENTS_PATH)
+            .replace("%SQUAT_PROGRESS_PATH%", SQUAT_PROGRESS_PATH)
             .replace("%SQUAT_COMPLETE_PATH%", SQUAT_COMPLETE_PATH)
             .replace("%DEFAULT_SQUAT_TARGET%", str(DEFAULT_SQUAT_TARGET))
             .replace("%POPUP_VERSION%", POPUP_VERSION)
@@ -1430,6 +1857,53 @@ class EventSubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
+
+    def serve_overlay_page(self):
+        html = (
+            OVERLAY_HTML
+            .replace("%OVERLAY_EVENTS_PATH%", OVERLAY_EVENTS_PATH)
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.safe_write(html)
+
+    def serve_overlay_events(self):
+        last_event_id = self.headers.get("Last-Event-ID", "-1")
+        try:
+            last_seen_sequence = int(last_event_id or "-1")
+        except ValueError:
+            last_seen_sequence = -1
+
+        event = OVERLAY_STATE.wait_for_next(last_seen_sequence, timeout=25.0)
+        if event is None:
+            payload = "event: keepalive\ndata: {}\n\n".encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.safe_write(payload)
+            return
+
+        event_id = event.get("sequence", 0)
+        body = f"id: {event_id}\ndata: {json.dumps(event)}\n\n".encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.safe_write(body)
 
     def serve_popup_events(self):
         last_event_id = self.headers.get("Last-Event-ID", "0")
@@ -1475,6 +1949,9 @@ class EventSubHandler(BaseHTTPRequestHandler):
                     "reward_id": TARGET_REWARD_ID,
                     "popup_path": POPUP_PATH,
                     "popup_events_path": POPUP_EVENTS_PATH,
+                    "overlay_path": OVERLAY_PATH,
+                    "overlay_events_path": OVERLAY_EVENTS_PATH,
+                    "squat_progress_path": SQUAT_PROGRESS_PATH,
                     "squat_complete_path": SQUAT_COMPLETE_PATH,
                     "auto_open_popup": AUTO_OPEN_POPUP,
                     "soft_lock_enabled": SOFT_LOCK_ENABLED,
@@ -1493,11 +1970,31 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.serve_popup_events()
             return
 
+        if parsed_path.path == OVERLAY_PATH:
+            self.serve_overlay_page()
+            return
+
+        if parsed_path.path == OVERLAY_EVENTS_PATH:
+            self.serve_overlay_events()
+            return
+
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == SQUAT_PROGRESS_PATH:
+            raw_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            try:
+                progress_payload = json.loads(raw_body.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                progress_payload = {}
+
+            overlay_update = publish_overlay_progress(progress_payload)
+            print(json.dumps({"squat_progress": overlay_update}), flush=True)
+            self.send_json_response(200, {"ok": True, "overlay": overlay_update})
+            return
+
         if parsed_path.path == SQUAT_COMPLETE_PATH:
             raw_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             try:
@@ -1506,8 +2003,14 @@ class EventSubHandler(BaseHTTPRequestHandler):
                 completion_payload = {}
 
             release_result = release_soft_lock(completion_payload)
+            overlay_update = publish_overlay_progress(
+                dict(completion_payload, status="complete")
+            )
             print(json.dumps({"soft_lock_released": release_result}), flush=True)
-            self.send_json_response(200, {"ok": True, "soft_lock": release_result})
+            self.send_json_response(
+                200,
+                {"ok": True, "soft_lock": release_result, "overlay": overlay_update},
+            )
             return
 
         if parsed_path.path != CALLBACK_PATH:
@@ -1618,6 +2121,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
                 flush=True,
             )
             if not should_trigger:
+                publish_overlay_skipped(trigger_reason, user_login, reward_title)
                 print(
                     json.dumps(
                         {
@@ -1637,6 +2141,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
             popup_job, session_limit = POPUP_STATE.publish(matched)
             print(json.dumps({"session_limit": session_limit}), flush=True)
             if popup_job is None:
+                publish_overlay_skipped(session_limit["reason"], user_login, reward_title)
                 print(
                     json.dumps(
                         {
@@ -1659,6 +2164,8 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
             soft_lock_result = soft_lock_game_windows(popup_job)
             print(json.dumps({"soft_lock": soft_lock_result}), flush=True)
+            overlay_update = publish_overlay_active(popup_job, soft_lock_result)
+            print(json.dumps({"overlay": overlay_update}), flush=True)
             maybe_open_popup()
             print(f"{user_login} redeemed {reward_title}", flush=True)
             print(
@@ -1707,6 +2214,8 @@ def main():
                 "reward_title": TARGET_REWARD_TITLE,
                 "reward_id": TARGET_REWARD_ID,
                 "popup_path": POPUP_PATH,
+                "overlay_path": OVERLAY_PATH,
+                "overlay_url": f"http://127.0.0.1:{PORT}{OVERLAY_PATH}",
                 "popup_open_url": POPUP_OPEN_URL,
                 "auto_open_popup": AUTO_OPEN_POPUP,
                 "soft_lock_enabled": SOFT_LOCK_ENABLED,
