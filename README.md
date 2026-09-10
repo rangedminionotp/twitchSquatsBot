@@ -3,7 +3,45 @@
 Small Riot/Twitch utility repo with:
 
 - a Riot script that returns whether a player was recently active based on public match data
-- a Twitch EventSub webhook listener for channel point redemptions on `nannersowo`
+- a Twitch EventSub listener for channel point redemptions on the connected broadcaster account
+- persistent owed and completed squat counters shown in the control page, capture page, and OBS overlay
+
+## Windows quick start (recommended)
+
+The app now supports Twitch EventSub over WebSocket, so a local desktop user does
+not need ngrok, a public callback, or an EventSub signing secret.
+
+1. Install Python 3.
+2. Create a Twitch application in the Twitch Developer Console and copy its Client ID.
+   Configure the application as a public client if Twitch presents that option.
+3. Run:
+
+```powershell
+.\start_windows.ps1
+```
+
+4. Open [http://127.0.0.1:8080/control](http://127.0.0.1:8080/control).
+5. Paste the Client ID, click **Connect with Twitch**, authorize the app, and select
+   the channel point reward to watch.
+6. Open the capture page and add the displayed overlay URL as an OBS Browser Source.
+
+The first run creates `.venv` and installs the packages in `requirements.txt`.
+Settings and the Twitch session are stored locally in
+`%USERPROFILE%\.squat-capture\config.json`; keep that file private. The older
+webhook/ngrok setup below is still available for compatibility.
+
+### WSL
+
+From a WSL/bash terminal, use the Linux launcher instead of the PowerShell script:
+
+```bash
+chmod +x start_wsl.sh
+./start_wsl.sh
+```
+
+Then open `http://127.0.0.1:8080/control` in the Windows browser. If Python's venv
+module is missing, install it with `sudo apt install python3-venv` and run the
+launcher again.
 
 ## What it does
 

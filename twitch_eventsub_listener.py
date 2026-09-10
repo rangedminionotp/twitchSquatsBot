@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from app_config import APP_CONFIG
+from app_stats import APP_STATS
+from control_panel import CONTROL_HTML
+from twitch_eventsub_websocket import TwitchService
+
 
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
@@ -25,9 +30,9 @@ OVERLAY_STATE_PATH = os.environ.get("TWITCH_OVERLAY_STATE_PATH", "/overlay-state
 SQUAT_PROGRESS_PATH = os.environ.get("TWITCH_SQUAT_PROGRESS_PATH", "/squat-progress")
 SQUAT_COMPLETE_PATH = os.environ.get("TWITCH_SQUAT_COMPLETE_PATH", "/squat-complete")
 EVENTSUB_SECRET = os.environ.get("TWITCH_EVENTSUB_SECRET", "")
-BROADCASTER_LOGIN = "nannersowo"
-TARGET_REWARD_TITLE = os.environ.get("TARGET_REWARD_TITLE", "Hydrate")
-TARGET_REWARD_ID = os.environ.get("TARGET_REWARD_ID")
+BROADCASTER_LOGIN = os.environ.get("TWITCH_BROADCASTER_LOGIN", "")
+TARGET_REWARD_TITLE = os.environ.get("TARGET_REWARD_TITLE", "")
+TARGET_REWARD_ID = os.environ.get("TARGET_REWARD_ID", "")
 MAX_MESSAGE_AGE_SECONDS = 600
 AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
@@ -377,6 +382,14 @@ POPUP_HTML = """<!DOCTYPE html>
         <span id="reward">No active redeem</span>
       </div>
       <div class="card">
+        <strong>Squats Owed</strong>
+        <span id="owedCount">0</span>
+      </div>
+      <div class="card">
+        <strong>Squats Completed</strong>
+        <span id="completedCount">0</span>
+      </div>
+      <div class="card">
         <strong>Form Hint</strong>
         <span id="phase">Stand tall with your full body visible.</span>
       </div>
@@ -430,6 +443,9 @@ POPUP_HTML = """<!DOCTYPE html>
     const squatProgressPath = "%SQUAT_PROGRESS_PATH%";
     const squatCompletePath = "%SQUAT_COMPLETE_PATH%";
     const defaultSquatTarget = Number("%DEFAULT_SQUAT_TARGET%") || 10;
+    const captureSessionId = window.crypto && window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : String(Date.now()) + Math.random();
     const mediaPipeScriptGroups = [
       {
         base: "https://cdn.jsdelivr.net/npm",
@@ -454,6 +470,8 @@ POPUP_HTML = """<!DOCTYPE html>
     const targetEl = document.getElementById("target");
     const viewerEl = document.getElementById("viewer");
     const rewardEl = document.getElementById("reward");
+    const owedCountEl = document.getElementById("owedCount");
+    const completedCountEl = document.getElementById("completedCount");
     const statusEl = document.getElementById("status");
     const phaseEl = document.getElementById("phase");
     const cameraStateEl = document.getElementById("cameraState");
@@ -646,6 +664,7 @@ POPUP_HTML = """<!DOCTYPE html>
         reward_title: currentJob ? currentJob.reward_title : null,
         squat_count: squatCount,
         squat_target: target,
+        capture_session_id: captureSessionId,
       };
       try {
         const response = await fetch(squatCompletePath, {
@@ -674,6 +693,7 @@ POPUP_HTML = """<!DOCTYPE html>
         reward_title: currentJob ? currentJob.reward_title : null,
         squat_count: squatCount,
         squat_target: squatTargetTotal,
+        capture_session_id: captureSessionId,
       };
       try {
         const response = await fetch(squatProgressPath, {
@@ -685,6 +705,11 @@ POPUP_HTML = """<!DOCTYPE html>
         });
         if (!response.ok) {
           throw new Error("HTTP " + response.status);
+        }
+        const result = await response.json();
+        if (result.overlay) {
+          owedCountEl.textContent = String(result.overlay.owed_squats || 0);
+          completedCountEl.textContent = String(result.overlay.completed_squats || 0);
         }
       } catch (error) {
         debugLog("could not report squat progress: " + (error.message || error));
@@ -1117,6 +1142,10 @@ POPUP_HTML = """<!DOCTYPE html>
       showError("Unhandled promise rejection:" + newline + event.reason);
     });
     connectEventStream();
+    fetch("/api/stats").then(function (response) { return response.json(); }).then(function (stats) {
+      owedCountEl.textContent = String(stats.owed_squats || 0);
+      completedCountEl.textContent = String(stats.completed_squats || 0);
+    }).catch(function () {});
     }
 
     initPopupPage().catch(function (error) {
@@ -1296,6 +1325,8 @@ OVERLAY_HTML = """<!DOCTYPE html>
     <div class="bar"><div id="fill" class="fill"></div></div>
     <div class="footer">
       <span id="viewer">No active viewer</span>
+      <span id="owed">Owed: 0</span>
+      <span id="completed">Completed: 0</span>
       <span id="status">Idle</span>
     </div>
   </main>
@@ -1310,6 +1341,8 @@ OVERLAY_HTML = """<!DOCTYPE html>
     const percentEl = document.getElementById("percent");
     const fillEl = document.getElementById("fill");
     const viewerEl = document.getElementById("viewer");
+    const owedEl = document.getElementById("owed");
+    const completedEl = document.getElementById("completed");
     const statusEl = document.getElementById("status");
     let hideTimer = null;
     let lastOverlaySignature = "";
@@ -1337,6 +1370,8 @@ OVERLAY_HTML = """<!DOCTYPE html>
         state.reward_title || "",
         state.squat_count || 0,
         state.squat_target || 0,
+        state.owed_squats || 0,
+        state.completed_squats || 0,
         state.progress_updated_at || "",
       ].join("|");
       if (stateSignature === lastOverlaySignature) return;
@@ -1353,6 +1388,8 @@ OVERLAY_HTML = """<!DOCTYPE html>
       percentEl.textContent = percent + "%";
       fillEl.style.width = percent + "%";
       viewerEl.textContent = viewer;
+      owedEl.textContent = "Owed: " + Number(state.owed_squats || 0);
+      completedEl.textContent = "Completed: " + Number(state.completed_squats || 0);
 
       if (state.status === "complete") {
         lockPillEl.textContent = "Unlocked";
@@ -1741,6 +1778,7 @@ def publish_overlay_active(popup_job, soft_lock_result=None):
         or popup_job.get("squat_target")
         or DEFAULT_SQUAT_TARGET
     )
+    stats = APP_STATS.snapshot()
     return OVERLAY_STATE.publish(
         {
             "status": "active",
@@ -1754,6 +1792,8 @@ def publish_overlay_active(popup_job, soft_lock_result=None):
             "session_squats_accepted": popup_job.get("session_squats_accepted"),
             "max_session_squats": popup_job.get("max_session_squats"),
             "remaining_session_squats": popup_job.get("remaining_session_squats"),
+            "owed_squats": stats["owed_squats"],
+            "completed_squats": stats["completed_squats"],
         }
     )
 
@@ -1768,6 +1808,10 @@ def publish_overlay_progress(progress_payload):
     except (TypeError, ValueError):
         squat_target = POPUP_STATE.session_squats_accepted or DEFAULT_SQUAT_TARGET
     progress_state = POPUP_STATE.record_progress(progress_payload, squat_target)
+    stats = APP_STATS.record_count(
+        progress_payload.get("capture_session_id"),
+        progress_state["squat_count"],
+    )
 
     return OVERLAY_STATE.publish(
         {
@@ -1780,6 +1824,8 @@ def publish_overlay_progress(progress_payload):
             "squat_target": progress_state["squat_target"],
             "message": "Squat progress updated.",
             "progress_updated_at": progress_state["progress_updated_at"],
+            "owed_squats": stats["owed_squats"],
+            "completed_squats": stats["completed_squats"],
         }
     )
 
@@ -2097,13 +2143,18 @@ def get_matching_redemption(payload):
     reward_title = reward.get("title")
     reward_id = reward.get("id")
 
-    if broadcaster_login != BROADCASTER_LOGIN.lower():
+    configured_login = APP_CONFIG.get("broadcaster_login") or BROADCASTER_LOGIN
+    configured_reward_id = APP_CONFIG.get("target_reward_id") or TARGET_REWARD_ID
+    configured_reward_title = APP_CONFIG.get("target_reward_title") or TARGET_REWARD_TITLE
+    if not configured_reward_id and not configured_reward_title:
+        return None
+    if configured_login and broadcaster_login != configured_login.lower():
         return None
 
-    if TARGET_REWARD_ID and reward_id != TARGET_REWARD_ID:
+    if configured_reward_id and reward_id != configured_reward_id:
         return None
 
-    if TARGET_REWARD_TITLE and reward_title != TARGET_REWARD_TITLE:
+    if not configured_reward_id and configured_reward_title and reward_title != configured_reward_title:
         return None
 
     return {
@@ -2117,6 +2168,40 @@ def get_matching_redemption(payload):
         "redeemed_at": event.get("redeemed_at"),
         "user_input": event.get("user_input"),
     }
+
+
+def process_eventsub_notification(payload):
+    """Shared notification path for WebSocket and legacy webhook transports."""
+    summary = summarize_redemption(payload)
+    print(json.dumps({"incoming_redemption": summary}), flush=True)
+    matched = get_matching_redemption(payload)
+    if matched is None:
+        print(json.dumps({"matched": False}), flush=True)
+        return
+
+    user_login = matched.get("user_login") or "unknown_user"
+    reward_title = matched.get("reward_title") or "unknown_reward"
+    should_trigger, trigger_reason = should_trigger_popup_from_riot_check()
+    print(json.dumps({"riot_gate": {"allowed": should_trigger, "reason": trigger_reason,
+        "user_login": user_login, "reward_title": reward_title}}), flush=True)
+    if not should_trigger:
+        publish_overlay_skipped(trigger_reason, user_login, reward_title)
+        return
+
+    popup_job, session_limit = POPUP_STATE.publish(matched)
+    print(json.dumps({"session_limit": session_limit}), flush=True)
+    if popup_job is None:
+        publish_overlay_skipped(session_limit["reason"], user_login, reward_title)
+        return
+
+    soft_lock_result = soft_lock_game_windows(popup_job)
+    print(json.dumps({"soft_lock": soft_lock_result}), flush=True)
+    print(json.dumps({"overlay": publish_overlay_active(popup_job, soft_lock_result)}), flush=True)
+    maybe_open_popup()
+    print(f"{user_login} redeemed {reward_title}", flush=True)
+
+
+TWITCH_SERVICE = TwitchService(APP_CONFIG, process_eventsub_notification)
 
 
 def summarize_redemption(payload):
@@ -2152,6 +2237,25 @@ class EventSubHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.safe_write(body)
+
+    def read_json_body(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        try:
+            return json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def send_api_error(self, error):
+        print(json.dumps({"control_api_error": str(error)}), flush=True)
+        self.send_json_response(400, {"ok": False, "error": str(error)})
+
+    def serve_control_page(self):
+        body = CONTROL_HTML.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.safe_write(body)
@@ -2257,6 +2361,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def serve_overlay_state(self):
         state = OVERLAY_STATE.snapshot()
+        state.update(APP_STATS.snapshot())
         if state.get("status") in ("active", "complete"):
             progress_state = POPUP_STATE.progress_snapshot()
             state.update(
@@ -2302,6 +2407,29 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == "/control":
+            self.serve_control_page()
+            return
+
+        if parsed_path.path == "/api/settings":
+            self.send_json_response(200, {
+                "ok": True,
+                "settings": APP_CONFIG.public(),
+                "twitch": TWITCH_SERVICE.status,
+            })
+            return
+
+        if parsed_path.path == "/api/stats":
+            self.send_json_response(200, {"ok": True, **APP_STATS.snapshot()})
+            return
+
+        if parsed_path.path == "/api/twitch/rewards":
+            try:
+                self.send_json_response(200, {"ok": True, "rewards": TWITCH_SERVICE.rewards()})
+            except Exception as error:
+                self.send_api_error(error)
+            return
+
         if parsed_path.path == CALLBACK_PATH:
             self.send_json_response(
                 200,
@@ -2366,6 +2494,32 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == "/api/settings":
+            APP_CONFIG.update(self.read_json_body())
+            self.send_json_response(200, {"ok": True, "settings": APP_CONFIG.public()})
+            return
+
+        if parsed_path.path == "/api/stats":
+            try:
+                payload = self.read_json_body()
+                stats = APP_STATS.set_counters(
+                    owed=payload.get("owed_squats"),
+                    completed=payload.get("completed_squats"),
+                )
+                OVERLAY_STATE.publish(stats)
+                self.send_json_response(200, {"ok": True, **stats})
+            except ValueError as error:
+                self.send_api_error(error)
+            return
+
+        if parsed_path.path == "/api/twitch/login":
+            try:
+                login = TWITCH_SERVICE.start_device_login()
+                self.send_json_response(200, {"ok": True, **login})
+            except Exception as error:
+                self.send_api_error(error)
+            return
+
         if parsed_path.path == SQUAT_PROGRESS_PATH:
             raw_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             try:
@@ -2581,11 +2735,8 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    if not EVENTSUB_SECRET or len(EVENTSUB_SECRET) < 10:
-        print("Set TWITCH_EVENTSUB_SECRET to an ASCII string with at least 10 characters.")
-        return
-
     server = ThreadingHTTPServer((HOST, PORT), EventSubHandler)
+    TWITCH_SERVICE.start()
     print(
         json.dumps(
             {
@@ -2593,9 +2744,9 @@ def main():
                 "host": HOST,
                 "port": PORT,
                 "path": CALLBACK_PATH,
-                "channel": BROADCASTER_LOGIN,
-                "reward_title": TARGET_REWARD_TITLE,
-                "reward_id": TARGET_REWARD_ID,
+                "channel": APP_CONFIG.get("broadcaster_login") or BROADCASTER_LOGIN,
+                "reward_title": APP_CONFIG.get("target_reward_title") or TARGET_REWARD_TITLE,
+                "reward_id": APP_CONFIG.get("target_reward_id") or TARGET_REWARD_ID,
                 "popup_path": POPUP_PATH,
                 "overlay_path": OVERLAY_PATH,
                 "overlay_url": f"http://127.0.0.1:{PORT}{OVERLAY_PATH}",
@@ -2606,6 +2757,9 @@ def main():
                 "auto_open_popup": AUTO_OPEN_POPUP,
                 "soft_lock_enabled": SOFT_LOCK_ENABLED,
                 "max_session_squats": MAX_SESSION_SQUATS,
+                "control_url": f"http://127.0.0.1:{PORT}/control",
+                "eventsub_transport": "websocket" if APP_CONFIG.get("twitch_access_token") else "setup_required",
+                "legacy_webhook_enabled": bool(EVENTSUB_SECRET),
             }
         ),
         flush=True,
