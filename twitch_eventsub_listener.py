@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from app_config import APP_CONFIG
 from app_stats import APP_STATS
 from control_panel import CONTROL_HTML
 from twitch_eventsub_websocket import TwitchService
+from support_events import SupportService
 
 
 HOST = "0.0.0.0"
@@ -40,7 +42,7 @@ DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
 MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "50"))
 POPUP_VERSION = "2026-07-12-live-progress-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
-RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", "python3 script.py")
+RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", f'"{sys.executable}" script.py')
 SOFT_LOCK_ENABLED = os.environ.get("SOFT_LOCK_ENABLED", "1") == "1"
 
 MESSAGE_ID_HEADER = "Twitch-Eventsub-Message-Id"
@@ -386,7 +388,7 @@ POPUP_HTML = """<!DOCTYPE html>
         <span id="owedCount">0</span>
       </div>
       <div class="card">
-        <strong>Squats Completed</strong>
+        <strong>Completed · Twitch stream</strong>
         <span id="completedCount">0</span>
       </div>
       <div class="card">
@@ -1306,28 +1308,41 @@ OVERLAY_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <main id="overlay" class="overlay visible">
+  <style>
+    .overlay{left:16px;bottom:16px;width:min(420px,calc(100vw - 32px));padding:20px;border-radius:20px;background:linear-gradient(140deg,rgba(24,33,46,.97),rgba(10,15,24,.97));border:1px solid #ffffff20;box-shadow:0 8px 24px #0004;backdrop-filter:none;font-family:Inter,"Segoe UI",sans-serif;overflow:hidden}
+    .overlay:before{content:"";position:absolute;top:0;left:22px;right:22px;height:2px;background:linear-gradient(90deg,#68efd0,transparent)}
+    .top-row{align-items:center;margin:0 0 18px}.brand-mark{display:flex;align-items:center;gap:10px}.mark{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:#68efd015;color:#68efd0}.icon{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    h1{font-size:15px;letter-spacing:-.02em;margin:0;text-shadow:none;font-weight:750}.eyebrow{font-size:9px;letter-spacing:.16em;color:#8d9eb6;margin-top:4px;font-weight:600}
+    .lock-pill{padding:6px 9px;font-size:9px;letter-spacing:.09em;border-color:#ffffff12;background:#ffffff06;color:#a7b5c9;display:flex;align-items:center;gap:6px}.lock-pill:before{content:"";height:5px;width:5px;border-radius:50%;background:currentColor}.overlay[data-state="active"] .lock-pill{color:#ffbf7d;background:#ffb36b10;border-color:#ffb36b30}.lock-pill.complete{color:#68efd0;background:#68efd010;border-color:#68efd030}
+    .totals{display:grid;grid-template-columns:1fr 1fr;gap:10px}.total{padding:14px;border:1px solid #ffffff0b;border-radius:12px;background:#ffb36b08;min-width:0}.total.done{background:#68efd008}.total-label{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:650;letter-spacing:.1em;color:#a7b5c9;text-transform:uppercase}.total-label .icon{width:13px;height:13px}.total strong{display:block;color:#ffbf7d;font-size:38px;line-height:1.2;font-weight:750;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin-top:8px;overflow-wrap:anywhere}.total.done strong{color:#68efd0}.total small{font-size:10px;color:#8292a9}
+    .challenge{margin-top:16px;padding-top:16px;border-top:1px solid #ffffff12}.count-row{align-items:center;margin-bottom:12px}.count-group{display:flex;align-items:baseline;gap:8px;min-width:0}.count{font-size:46px;font-weight:750;line-height:1;overflow-wrap:anywhere}.target{font-size:13px;font-weight:500;color:#8d9eb6}.bar{height:5px;border:0;background:#ffffff10}.fill{background:linear-gradient(90deg,#36cfa9,#8bf7dc);box-shadow:none}.message{margin:12px 0 0;font-size:12px;color:#a7b5c9;overflow-wrap:anywhere}.footer{margin-top:14px;padding-top:12px;border-top:1px solid #ffffff0b;font-size:10px;font-weight:500;letter-spacing:.02em;text-transform:none;color:#8292a9}.footer span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.footer #viewer{max-width:72%}
+    .overlay[data-state="idle"] .challenge,.overlay[data-state="skipped"] .count-row,.overlay[data-state="skipped"] .bar{display:none}.overlay[data-state="skipped"] .message{margin:0}.overlay[data-state="complete"] .count{color:#68efd0}
+    @media(max-width:340px){.overlay{padding:14px;left:8px;bottom:8px;width:calc(100vw - 16px)}.total{padding:10px}.total strong{font-size:30px}.top-row{gap:6px}h1{font-size:13px}}
+    @media(prefers-reduced-motion:reduce){.overlay,.fill{transition:none}}
+  </style>
+  <main id="overlay" class="overlay visible" data-state="idle" aria-label="Squat Capture live stats">
     <div class="top-row">
-      <div>
-        <div class="eyebrow">Live Redeem Challenge</div>
-        <h1>Squat Lock</h1>
-      </div>
-      <div id="lockPill" class="lock-pill">Waiting</div>
+      <div class="brand-mark"><span class="mark"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span><div><h1>Squat Capture</h1><div class="eyebrow">EVERY REP COUNTS</div></div></div>
+      <div id="lockPill" class="lock-pill">Standby</div>
     </div>
-    <p id="message" class="message">Waiting for a channel point redeem...</p>
+    <div class="totals">
+      <div class="total"><div class="total-label"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Owed</div><strong id="owed">0</strong><small>overall remaining</small></div>
+      <div class="total done"><div class="total-label"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>Completed</div><strong id="completed">0</strong><small id="sessionLabel">checking Twitch session</small></div>
+    </div>
+    <div class="challenge">
     <div class="count-row">
-      <div>
+      <div class="count-group">
         <div id="count" class="count">0</div>
-        <div id="target" class="target">of 0 squats</div>
+        <div id="target" class="target">/ 0 reps</div>
       </div>
       <div id="percent" class="target">0%</div>
     </div>
     <div class="bar"><div id="fill" class="fill"></div></div>
+    <p id="message" class="message"></p>
+    </div>
     <div class="footer">
-      <span id="viewer">No active viewer</span>
-      <span id="owed">Owed: 0</span>
-      <span id="completed">Completed: 0</span>
-      <span id="status">Idle</span>
+      <span id="viewer">Your next rep starts here</span>
+      <span id="status">Ready</span>
     </div>
   </main>
   <script>
@@ -1372,6 +1387,7 @@ OVERLAY_HTML = """<!DOCTYPE html>
         state.squat_target || 0,
         state.owed_squats || 0,
         state.completed_squats || 0,
+        state.stream_status || "unknown",
         state.progress_updated_at || "",
       ].join("|");
       if (stateSignature === lastOverlaySignature) return;
@@ -1384,33 +1400,36 @@ OVERLAY_HTML = """<!DOCTYPE html>
       const reward = state.reward_title || "squat redeem";
 
       countEl.textContent = String(squatCount);
-      targetEl.textContent = "of " + squatTarget + " squats";
+      overlayEl.dataset.state = ['active','complete','skipped'].includes(state.status) ? state.status : 'idle';
+      targetEl.textContent = "/ " + squatTarget + " reps";
       percentEl.textContent = percent + "%";
       fillEl.style.width = percent + "%";
       viewerEl.textContent = viewer;
-      owedEl.textContent = "Owed: " + Number(state.owed_squats || 0);
-      completedEl.textContent = "Completed: " + Number(state.completed_squats || 0);
+      owedEl.textContent = Number(state.owed_squats || 0).toLocaleString('en-US');
+      completedEl.textContent = Number(state.completed_squats || 0).toLocaleString('en-US');
+      document.getElementById('sessionLabel').textContent = state.stream_status === 'live' ? 'this stream' : state.stream_status === 'offline' ? 'last stream · offline' : 'session · Twitch unavailable';
 
       if (state.status === "complete") {
         lockPillEl.textContent = "Unlocked";
         lockPillEl.classList.add("complete");
         statusEl.textContent = "Complete";
-        messageEl.innerHTML = "<span class='viewer'>" + viewer + "</span>'s challenge is complete.";
+        messageEl.textContent = "Challenge complete. Nicely done!";
       } else if (state.status === "active") {
         lockPillEl.textContent = state.locked ? "Locked" : "Active";
         lockPillEl.classList.remove("complete");
         statusEl.textContent = "In Progress";
-        messageEl.innerHTML = "<span class='viewer'>" + viewer + "</span> redeemed " + reward + ".";
+        messageEl.textContent = reward;
       } else if (state.status === "skipped") {
         lockPillEl.textContent = "Skipped";
         lockPillEl.classList.remove("complete");
         statusEl.textContent = "Skipped";
         messageEl.textContent = state.message || "Redeem skipped.";
       } else {
-        lockPillEl.textContent = "Waiting";
+        lockPillEl.textContent = "Standby";
         lockPillEl.classList.remove("complete");
-        statusEl.textContent = "Idle";
-        messageEl.textContent = "Waiting for a channel point redeem...";
+        statusEl.textContent = "Ready";
+        viewerEl.textContent = "Your next rep starts here";
+        messageEl.textContent = "";
       }
 
       showOverlay();
@@ -2053,7 +2072,9 @@ def build_refresh_overlay_html(page_background="rgba(0, 0, 0, 0)"):
 
 
 def should_trigger_popup_from_riot_check():
-    if not RIOT_CHECK_ENABLED:
+    configured_enabled = APP_CONFIG.get("riot_check_enabled")
+    riot_check_enabled = configured_enabled == "1" if configured_enabled != "" else RIOT_CHECK_ENABLED
+    if not riot_check_enabled:
         return True, "riot_check_disabled"
 
     try:
@@ -2078,7 +2099,7 @@ def should_trigger_popup_from_riot_check():
         return True, "riot_idle"
 
     if stdout == "true":
-        return False, "riot_recently_active"
+        return False, "riot_in_game_or_unknown"
 
     return False, f"riot_check_unexpected_output:{stdout}"
 
@@ -2172,6 +2193,8 @@ def get_matching_redemption(payload):
 
 def process_eventsub_notification(payload):
     """Shared notification path for WebSocket and legacy webhook transports."""
+    if SUPPORT_SERVICE.twitch(payload):
+        return
     summary = summarize_redemption(payload)
     print(json.dumps({"incoming_redemption": summary}), flush=True)
     matched = get_matching_redemption(payload)
@@ -2201,7 +2224,13 @@ def process_eventsub_notification(payload):
     print(f"{user_login} redeemed {reward_title}", flush=True)
 
 
-TWITCH_SERVICE = TwitchService(APP_CONFIG, process_eventsub_notification)
+SUPPORT_SERVICE = SupportService(APP_CONFIG, APP_STATS, OVERLAY_STATE.publish)
+def update_stream_session(stream_id, status):
+    stats = APP_STATS.observe_stream(stream_id, status)
+    OVERLAY_STATE.publish(stats)
+
+
+TWITCH_SERVICE = TwitchService(APP_CONFIG, process_eventsub_notification, update_stream_session)
 
 
 def summarize_redemption(payload):
@@ -2415,7 +2444,8 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.send_json_response(200, {
                 "ok": True,
                 "settings": APP_CONFIG.public(),
-                "twitch": TWITCH_SERVICE.status,
+                "twitch": {**TWITCH_SERVICE.status, "auth_state": TWITCH_SERVICE.auth_state},
+                "support": SUPPORT_SERVICE.status,
             })
             return
 
@@ -2495,8 +2525,16 @@ class EventSubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed_path = urlparse(self.path)
         if parsed_path.path == "/api/settings":
-            APP_CONFIG.update(self.read_json_body())
-            self.send_json_response(200, {"ok": True, "settings": APP_CONFIG.public()})
+            try:
+                values = self.read_json_body()
+                old_twitch = (APP_CONFIG.get("subs_enabled"), APP_CONFIG.get("bits_enabled"))
+                APP_CONFIG.update(values)
+                SUPPORT_SERVICE.start()
+                if old_twitch != (APP_CONFIG.get("subs_enabled"), APP_CONFIG.get("bits_enabled")):
+                    TWITCH_SERVICE.reconfigure()
+                self.send_json_response(200, {"ok": True, "settings": APP_CONFIG.public()})
+            except ValueError as error:
+                self.send_api_error(error)
             return
 
         if parsed_path.path == "/api/stats":
@@ -2518,6 +2556,11 @@ class EventSubHandler(BaseHTTPRequestHandler):
                 self.send_json_response(200, {"ok": True, **login})
             except Exception as error:
                 self.send_api_error(error)
+            return
+
+        if parsed_path.path == "/api/riot/test":
+            allowed, reason = should_trigger_popup_from_riot_check()
+            self.send_json_response(200, {"ok": True, "allowed": allowed, "reason": reason})
             return
 
         if parsed_path.path == SQUAT_PROGRESS_PATH:
@@ -2636,6 +2679,11 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if SUPPORT_SERVICE.twitch({**payload, "message_id": message_id}):
+            self.send_response(204)
+            self.end_headers()
+            return
+
         summary = summarize_redemption(payload)
         print(json.dumps({"incoming_redemption": summary}), flush=True)
 
@@ -2737,6 +2785,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer((HOST, PORT), EventSubHandler)
     TWITCH_SERVICE.start()
+    SUPPORT_SERVICE.start()
     print(
         json.dumps(
             {

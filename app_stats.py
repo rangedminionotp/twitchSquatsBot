@@ -12,12 +12,16 @@ class PersistentStats:
         self.path = root / "stats.json"
         self._lock = RLock()
         self._data = {
-            "schema_version": 2,
+            "schema_version": 3,
             "owed_squats": 0,
             "completed_squats": 0,
+            "stream_id": "",
+            "stream_completed": 0,
             "capture_sessions": {},
+            "support_events": {},
         }
         self._load()
+        self._stream_status = "unknown"
 
     def _load(self):
         try:
@@ -30,6 +34,10 @@ class PersistentStats:
                     self._data["owed_squats"] = max(0, int(loaded.get("owed_squats", 0)))
                     self._data["completed_squats"] = max(0, int(loaded.get("completed_squats", 0)))
                 sessions = loaded.get("capture_sessions", {})
+                self._data["stream_id"] = str(loaded.get("stream_id", ""))
+                self._data["stream_completed"] = max(0, int(loaded.get("stream_completed", 0)))
+                if isinstance(loaded.get("support_events"), dict):
+                    self._data["support_events"] = loaded["support_events"]
                 if isinstance(sessions, dict):
                     self._data["capture_sessions"] = sessions
         except (OSError, TypeError, ValueError):
@@ -39,7 +47,9 @@ class PersistentStats:
         with self._lock:
             return {
                 "owed_squats": self._data["owed_squats"],
-                "completed_squats": self._data["completed_squats"],
+                "completed_squats": self._data["stream_completed"],
+                "stream_status": self._stream_status,
+                "stream_id": self._data["stream_id"],
                 # Compatibility for older capture/overlay pages during a restart.
                 "lifetime_squats": self._data["completed_squats"],
             }
@@ -58,6 +68,8 @@ class PersistentStats:
             if count > previous:
                 delta = count - previous
                 self._data["completed_squats"] += delta
+                if self._stream_status == "live":
+                    self._data["stream_completed"] += delta
                 self._data["owed_squats"] = max(0, self._data["owed_squats"] - delta)
                 sessions[capture_session_id] = count
                 # Keep the persistence file bounded while retaining recent dedupe keys.
@@ -67,12 +79,44 @@ class PersistentStats:
                 self._save()
             return self.snapshot()
 
+    def observe_stream(self, stream_id=None, status="unknown"):
+        """A Twitch broadcast ID, not a browser/app restart, defines a session."""
+        with self._lock:
+            if status == "live" and stream_id and stream_id != self._data["stream_id"]:
+                old_id, old_count = self._data["stream_id"], self._data["stream_completed"]
+                self._data["stream_id"], self._data["stream_completed"] = stream_id, 0
+                try:
+                    self._save()
+                except OSError:
+                    self._data["stream_id"], self._data["stream_completed"] = old_id, old_count
+                    raise
+            self._stream_status = status
+            return self.snapshot()
+
+    def add_support(self, event_key, amount):
+        """Commit the increment and replay guard together; retain IDs across restarts."""
+        if not event_key or not isinstance(amount, int) or amount < 0:
+            raise ValueError("Invalid support event")
+        with self._lock:
+            if event_key in self._data["support_events"]:
+                return self.snapshot()
+            old_owed = self._data["owed_squats"]
+            self._data["owed_squats"] += amount
+            self._data["support_events"][event_key] = amount
+            try:
+                self._save()
+            except OSError:
+                self._data["owed_squats"] = old_owed
+                del self._data["support_events"][event_key]
+                raise
+            return self.snapshot()
+
     def set_counters(self, owed=None, completed=None):
         updates = {}
         if owed is not None:
             updates["owed_squats"] = self._parse_counter(owed, "Owed counter")
         if completed is not None:
-            updates["completed_squats"] = self._parse_counter(completed, "Completed counter")
+            updates["stream_completed"] = self._parse_counter(completed, "Session completed counter")
         if not updates:
             raise ValueError("Provide owed_squats or completed_squats")
         with self._lock:

@@ -2,16 +2,27 @@ import json
 import os
 from pathlib import Path
 from threading import RLock
+from support_events import SUPPORT_DEFAULTS, validate_support_settings
 
+
+# Public identifier for Squat Capture, not a client secret.
+TWITCH_CLIENT_ID = "hjfh8olacuo9dwyrwgbiqmkzsk92ri"
 
 DEFAULTS = {
-    "twitch_client_id": "",
+    **SUPPORT_DEFAULTS,
+    "twitch_client_id": TWITCH_CLIENT_ID,
+    "broadcaster_avatar": "",
     "twitch_access_token": "",
     "twitch_refresh_token": "",
     "broadcaster_id": "",
     "broadcaster_login": "",
     "target_reward_id": "",
     "target_reward_title": "",
+    "riot_api_key": "",
+    "riot_accounts": "",
+    "riot_platform_region": "na1",
+    "riot_routing_region": "americas",
+    "riot_check_enabled": "0",
 }
 
 
@@ -41,10 +52,17 @@ class AppConfig:
                 "broadcaster_login": "TWITCH_BROADCASTER_LOGIN",
                 "target_reward_id": "TARGET_REWARD_ID",
                 "target_reward_title": "TARGET_REWARD_TITLE",
+                "riot_api_key": "RIOT_API_KEY",
+                "riot_accounts": "RIOT_ACCOUNTS",
+                "riot_platform_region": "RIOT_PLATFORM_REGION",
+                "riot_routing_region": "RIOT_ROUTING_REGION",
+                "riot_check_enabled": "RIOT_CHECK_ENABLED",
             }
             for key, env_name in env_map.items():
                 if env_name in os.environ:
                     self._data[key] = os.environ[env_name]
+            if not self._data["twitch_client_id"]:
+                self._data["twitch_client_id"] = TWITCH_CLIENT_ID
 
     def get(self, key, default=""):
         with self._lock:
@@ -55,12 +73,18 @@ class AppConfig:
             result = dict(self._data)
             result["twitch_access_token"] = "" if not result["twitch_access_token"] else "configured"
             result["twitch_refresh_token"] = "" if not result["twitch_refresh_token"] else "configured"
+            result["riot_api_key"] = "" if not result["riot_api_key"] else "configured"
+            for key in ("streamlabs_token", "streamelements_token"):
+                result[key] = "configured" if result[key] else ""
             return result
 
     def update(self, values):
         with self._lock:
+            values = validate_support_settings(values)
             for key in DEFAULTS:
                 if key in values and key not in ("twitch_access_token", "twitch_refresh_token"):
+                    if key in ("riot_api_key", "streamlabs_token", "streamelements_token") and values[key] == "configured":
+                        continue
                     self._data[key] = str(values[key] or "").strip()
             self._save()
 
@@ -75,6 +99,7 @@ class AppConfig:
         with self._lock:
             self._data["broadcaster_id"] = str(user.get("id", ""))
             self._data["broadcaster_login"] = str(user.get("login", ""))
+            self._data["broadcaster_avatar"] = str(user.get("profile_image_url", ""))
             self._save()
 
     def _save(self):

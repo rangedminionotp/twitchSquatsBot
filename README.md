@@ -2,7 +2,7 @@
 
 Small Riot/Twitch utility repo with:
 
-- a Riot script that returns whether a player was recently active based on public match data
+- a fail-closed Riot gate that checks whether all configured League accounts are out of game
 - a Twitch EventSub listener for channel point redemptions on the connected broadcaster account
 - persistent owed and completed squat counters shown in the control page, capture page, and OBS overlay
 
@@ -12,8 +12,7 @@ The app now supports Twitch EventSub over WebSocket, so a local desktop user doe
 not need ngrok, a public callback, or an EventSub signing secret.
 
 1. Install Python 3.
-2. Create a Twitch application in the Twitch Developer Console and copy its Client ID.
-   Configure the application as a public client if Twitch presents that option.
+2. Squat Capture includes its public Twitch Client ID. No developer setup is needed.
 3. Run:
 
 ```powershell
@@ -21,7 +20,7 @@ not need ngrok, a public callback, or an EventSub signing secret.
 ```
 
 4. Open [http://127.0.0.1:8080/control](http://127.0.0.1:8080/control).
-5. Paste the Client ID, click **Connect with Twitch**, authorize the app, and select
+5. Click **Connect with Twitch**, authorize the app on Twitch, and select
    the channel point reward to watch.
 6. Open the capture page and add the displayed overlay URL as an OBS Browser Source.
 
@@ -45,54 +44,34 @@ launcher again.
 
 ## What it does
 
-The script uses public Riot APIs that still work server-side:
+The League all-idle gate is optional and disabled by default. When enabled, it uses Riot's public APIs:
 
-1. `account-v1` resolves `GameName#TagLine` into a `puuid`.
-2. `match-v5` fetches the latest ranked match ID for that `puuid`.
-3. `match-v5` fetches the full match details and reports when it ended.
+1. `account-v1` resolves every configured `GameName#TagLine` into a PUUID.
+2. `spectator-v5` checks every PUUID for an active League game.
+3. The redeem is accepted only when every configured account is confirmed idle.
 
-Because Riot's public responses may not include the encrypted summoner ID required by `spectator-v5`, this project now reports recent activity instead of live-game status.
+The gate fails closed: an active account, expired API key, invalid Riot ID, network
+failure, or unexpected API response blocks the redeem instead of accidentally
+allowing it.
 
 ## Riot Setup
 
-Export your Riot API key:
+Open `/control`, enable **League all-idle gate**, paste a Riot development API key,
+and enter one Riot ID per line. Use **Test League gate now** before streaming.
 
-```bash
-export RIOT_API_KEY='your-riot-api-key'
-```
-
-Edit the top of `script.py` to set:
-
-- `ACCOUNT_REGION`
-- `MATCH_REGION`
-- `GAME_NAME`
-- `TAG_LINE`
-- `RECENT_ACTIVITY_MINUTES`
-- `MATCH_QUEUE`
-
-Run the script:
-
-```bash
-python3 script.py
-```
-
-## Output
-
-- `RECENTLY ACTIVE` means the latest public match ended within `RECENT_ACTIVITY_MINUTES`
-- `IDLE` means the latest public match is older than that threshold
-
-The script also prints the last match ID, champion, result, duration, and how long ago the match ended.
+`script.py` prints `false` only when all accounts are idle (allow redeem), and
+prints `true` for active or unknown state (block redeem).
 
 ## Routing notes
 
 - `ACCOUNT_REGION` is `americas`, `asia`, or `europe`
-- `MATCH_REGION` is also `americas`, `asia`, or `europe`
+- `PLATFORM_REGION` is the League shard, such as `na1`, `euw1`, or `kr`
 
 Examples:
 
-- North America: `ACCOUNT_REGION = "americas"` and `MATCH_REGION = "americas"`
-- EU West: `ACCOUNT_REGION = "europe"` and `MATCH_REGION = "europe"`
-- Korea: `ACCOUNT_REGION = "asia"` and `MATCH_REGION = "asia"`
+- North America: routing `americas`, platform `na1`
+- EU West: routing `europe`, platform `euw1`
+- Korea: routing `asia`, platform `kr`
 
 ## Important
 
@@ -379,3 +358,47 @@ Relevant docs:
 - [Handling webhook events](https://dev.twitch.tv/docs/eventsub/handling-webhook-events/)
 - [EventSub subscription types](https://dev.twitch.tv/docs/eventsub/eventsub-subscription-types/)
 - [API reference](https://dev.twitch.tv/docs/api/reference)
+# Auto-add squats from support
+
+## Counter scopes
+
+Owed is the overall remaining debt across broadcasts. Completed now represents
+the current Twitch broadcast (the last broadcast while offline), not lifetime reps.
+The app checks [Twitch Get Streams](https://dev.twitch.tv/docs/api/reference#get-streams)
+every 15 seconds while connected. A different broadcast ID starts Completed at zero;
+restarting the app, refreshing OBS, or reconnecting to the same ID does not reset it.
+Detection can lag Twitch by the polling interval/API latency. If Twitch is offline
+or its status is unavailable, reps still reduce Owed and increase the internally
+retained lifetime total, but do not increase stream Completed. No retroactive
+attribution is made for reps completed while stream status was unknown.
+Previous all-time counts are preserved internally (`lifetime_squats` in the stats
+API); they are not guessed to belong to the first detected stream. Manual Completed
+corrections now apply only to the stream counter.
+
+In **Auto-add squats**, independently enable Twitch subs, Twitch Bits, Streamlabs,
+and/or StreamElements. Set a squat amount for each source. All are off by default.
+Save rules, then reconnect Twitch after first enabling Sub or Bits so it can grant
+`channel:read:subscriptions` / `bits:read` permissions.
+
+- Subs: each new or gifted subscription adds the configured amount. Gift bundles
+  count each gift once. Automatic renewals / resub chat messages are not counted.
+- Bits: every configured whole unit adds the configured squats.
+- Streamlabs / StreamElements: choose an amount, currency and squat increment for
+  each provider. E.g. per USD 2.50 → 4 squats; USD 5.01 adds 8. Remainders are
+  discarded per event. Other currencies are ignored (no exchange conversion).
+- Streamlabs needs a [Socket API token](https://dev.streamlabs.com/v1/docs/socket-api).
+- StreamElements needs its channel ID and channel JWT, documented under
+  [WebSocket authentication](https://docs.streamelements.com/websockets).
+  The adapter listens to successful `channel.tips` events.
+
+Only **owed** increases; completed stays unchanged. The League gate does not block
+accrual and support does not launch capture. Keep the app running: these are live
+listeners, not an offline payment-history sync. Refunds are not reversed automatically.
+Provider event IDs are saved with counters to prevent replay after restarts.
+Streamlabs/StreamElements mirrored Twitch events are ignored; Twitch handles subs/Bits.
+Do not relay the same payment between donation providers or enable provider test
+alerts against production counters: not all providers mark simulated events.
+
+Tokens are stored in the local config file, masked in the settings API, and never
+included in connection error messages. Keep the control panel local/trusted; do not
+expose its unauthenticated server to the internet. Blank token fields keep saved tokens.

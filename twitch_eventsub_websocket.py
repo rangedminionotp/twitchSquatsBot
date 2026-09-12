@@ -29,7 +29,7 @@ def _request_json(url, method="GET", headers=None, data=None):
 
 
 class TwitchService:
-    def __init__(self, config, on_notification):
+    def __init__(self, config, on_notification, on_stream=None):
         self.config = config
         self.on_notification = on_notification
         self.status = {"state": "stopped", "message": "Not connected"}
@@ -37,6 +37,26 @@ class TwitchService:
         self._stop = threading.Event()
         self._socket = None
         self._auth_thread = None
+        self.auth_state = "idle"
+        self.on_stream = on_stream
+        self._stream_thread = None
+
+    def _watch_stream(self):
+        while not self._stop.is_set():
+            try:
+                user_id = self.config.get("broadcaster_id")
+                if not user_id or not self.config.get("twitch_access_token"):
+                    self.on_stream(None, "unknown")
+                else:
+                    result = _request_json(API_URL + "/streams?" + urllib.parse.urlencode({"user_id": user_id}), headers=self.api_headers())
+                    streams = result["data"]
+                    # Ignore responses for an account that changed during the request.
+                    if user_id == self.config.get("broadcaster_id"):
+                        self.on_stream(user_id + ":" + streams[0]["id"] if streams else None,
+                                       "live" if streams else "offline")
+            except Exception:
+                self.on_stream(None, "unknown")
+            self._stop.wait(15)
 
     def api_headers(self):
         return {
@@ -77,17 +97,24 @@ class TwitchService:
         return _request_json(url, headers=self.api_headers()).get("data", [])
 
     def start_device_login(self):
+        if self._auth_thread and self._auth_thread.is_alive():
+            raise RuntimeError("A Twitch login is already in progress")
         client_id = self.config.get("twitch_client_id")
         if not client_id:
             raise RuntimeError("Save a Twitch Client ID first")
         result = _request_json(
             IDENTITY_URL + "/device",
             method="POST",
-            data={"client_id": client_id, "scopes": "channel:read:redemptions"},
+            data={"client_id": client_id, "scopes": " ".join([
+                "channel:read:redemptions",
+                *(["channel:read:subscriptions"] if self.config.get("subs_enabled") == "1" else []),
+                *(["bits:read"] if self.config.get("bits_enabled") == "1" else []),
+            ])},
         )
         if self._auth_thread and self._auth_thread.is_alive():
             raise RuntimeError("A Twitch login is already in progress")
         self.status = {"state": "authorizing", "message": "Waiting for Twitch authorization"}
+        self.auth_state = "pending"
         self._auth_thread = threading.Thread(target=self._poll_device_login, args=(result,), daemon=True)
         self._auth_thread.start()
         try:
@@ -116,18 +143,29 @@ class TwitchService:
                 )
                 self.config.update_tokens(result["access_token"], result.get("refresh_token", ""))
                 user = self.identify()
+                self.auth_state = "success"
                 self.status = {"state": "authorized", "message": f"Logged in as {user['login']}"}
-                self.start()
+                self.reconfigure()
                 return
-            except RuntimeError as error:
+            except Exception as error:
                 message = str(error)
                 if "authorization_pending" not in message and "slow_down" not in message:
                     self.status = {"state": "error", "message": message}
+                    self.auth_state = "failed"
                     return
             time.sleep(interval)
         self.status = {"state": "error", "message": "Twitch login expired"}
+        self.auth_state = "failed"
+
+    def reconfigure(self):
+        if self._socket:
+            self._socket.close()
+        self.start()
 
     def start(self):
+        if self.on_stream and not (self._stream_thread and self._stream_thread.is_alive()):
+            self._stream_thread = threading.Thread(target=self._watch_stream, daemon=True)
+            self._stream_thread.start()
         if self._thread and self._thread.is_alive():
             return
         if not self.config.get("twitch_client_id") or not self.config.get("twitch_access_token"):
@@ -157,10 +195,26 @@ class TwitchService:
                         session_id = packet["payload"]["session"]["id"]
                         if not seamless_reconnect:
                             self._subscribe(session_id)
+                            self.support_errors = []
+                            types = []
+                            if self.config.get("subs_enabled") == "1":
+                                types.extend(["channel.subscribe", "channel.subscription.gift"])
+                            if self.config.get("bits_enabled") == "1":
+                                types.append("channel.cheer")
+                            for kind in types:
+                                try:
+                                    self._subscribe(session_id, event_type=kind)
+                                except Exception:
+                                    self.support_errors.append(kind)
                         seamless_reconnect = False
                         self.status = {"state": "connected", "message": "Listening for channel point redeems"}
+                        if getattr(self, "support_errors", []):
+                            self.status["message"] += "; support events unavailable — reconnect Twitch to grant permissions"
+                        elif self.config.get("subs_enabled") == "1" or self.config.get("bits_enabled") == "1":
+                            self.status["message"] += " and enabled support events"
                     elif message_type == "notification":
-                        self.on_notification(packet.get("payload", {}))
+                        self.on_notification({**packet.get("payload", {}),
+                            "message_id": packet.get("metadata", {}).get("message_id")})
                     elif message_type == "session_reconnect":
                         reconnect_url = packet["payload"]["session"]["reconnect_url"]
                         self._socket.close()
@@ -168,16 +222,18 @@ class TwitchService:
                         seamless_reconnect = True
             except Exception as error:
                 self.status = {"state": "disconnected", "message": str(error)}
+                if self._socket:
+                    self._socket.close()
                 if not self._stop.wait(delay):
                     delay = min(delay * 2, 30)
 
-    def _subscribe(self, session_id, allow_refresh=True):
+    def _subscribe(self, session_id, allow_refresh=True, event_type=REDEMPTION_TYPE):
         broadcaster_id = self.config.get("broadcaster_id")
         if not broadcaster_id:
             self.identify()
             broadcaster_id = self.config.get("broadcaster_id")
         payload = {
-            "type": REDEMPTION_TYPE,
+            "type": event_type,
             "version": "1",
             "condition": {"broadcaster_user_id": broadcaster_id},
             "transport": {"method": "websocket", "session_id": session_id},
@@ -196,5 +252,5 @@ class TwitchService:
             detail = error.read().decode("utf-8", errors="replace")
             if error.code == 401 and allow_refresh:
                 self.refresh_access_token()
-                return self._subscribe(session_id, allow_refresh=False)
+                return self._subscribe(session_id, allow_refresh=False, event_type=event_type)
             raise RuntimeError(f"Could not create EventSub subscription ({error.code}): {detail}") from error
