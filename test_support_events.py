@@ -85,6 +85,38 @@ class SupportTests(unittest.TestCase):
         self.stats.add_support("x", 3)
         self.assertEqual(self.stats.snapshot()["owed_squats"], 3)
 
+    def test_preview_never_changes_real_data(self):
+        self.config.update({"subs_enabled": "1", "subs_squats": "10"})
+        self.stats.set_counters(owed=774)
+        before = self.stats.path.read_bytes()
+        self.assertEqual(self.service.preview("subs", 5)["delta"], 50)
+        self.assertEqual(self.stats.path.read_bytes(), before)
+        self.assertEqual(self.service.diagnostics(), [])
+        with self.assertRaises(ValueError):
+            self.service.preview("unknown", 1)
+
+    def test_activity_persistence_and_duplicate_diagnostics(self):
+        self.config.update({"subs_enabled": "1"})
+        self.service.add("subs", "secret-event-id")
+        self.service.add("subs", "secret-event-id")
+        restored = PersistentStats()
+        self.assertEqual(len(restored.activity()), 1)
+        self.assertEqual(restored.activity()[0]["amount"], 1)
+        self.assertNotIn("secret-event-id", str(restored.activity()))
+        self.assertEqual(self.service.diagnostics()[0]["reason"], "Ignored: duplicate event")
+
+    def test_health_does_not_confuse_login_with_listening(self):
+        from twitch_eventsub_websocket import TwitchService, REDEMPTION_TYPE
+        self.config.update({"subs_enabled": "1"})
+        service = TwitchService(self.config, lambda _: None)
+        service.auth_state = "success"
+        self.assertEqual(service.health()["listeners"][1]["state"], "attention")
+        service.status = {"state": "connected", "message": "Listening"}
+        service.listening_types = {REDEMPTION_TYPE, "channel.subscribe", "channel.subscription.gift"}
+        self.assertEqual(service.health()["listeners"][1]["state"], "ready")
+        service.listening_types.discard("channel.subscription.gift")
+        self.assertEqual(service.health()["listeners"][1]["state"], "attention")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -360,6 +360,18 @@ Relevant docs:
 - [API reference](https://dev.twitch.tv/docs/api/reference)
 # Auto-add squats from support
 
+## Diagnostics and safe testing
+
+The control panel now includes **Connection health**, with separate Channel Points,
+Subs/gifts and Bits listener readiness. **Check again** refreshes the status; it
+does not reconnect or change permissions. Use Connect with Twitch for reauthorization.
+**Recent activity** retains the last 100 counter records across restarts. Its
+received-support-event diagnostics keep the last 30 decisions in memory, including
+duplicate events and ignored amounts. History starts with this version; old events
+cannot be reconstructed. Raw payloads, donor messages and credentials are not logged.
+**Safe rule test** previews saved source rules only, without payments, real counter
+updates or event ingestion. A passing rule preview does not verify provider delivery.
+
 ## Counter scopes
 
 Owed is the overall remaining debt across broadcasts. Completed now represents

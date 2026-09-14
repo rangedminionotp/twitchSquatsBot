@@ -40,6 +40,20 @@ class TwitchService:
         self.auth_state = "idle"
         self.on_stream = on_stream
         self._stream_thread = None
+        self.listening_types = set()
+
+    def health(self):
+        connected = self.status.get("state") == "connected"
+        rows = []
+        for label, enabled, kinds in [
+            ("Channel Points", True, [REDEMPTION_TYPE]),
+            ("Subs / gifts", self.config.get("subs_enabled") == "1", ["channel.subscribe", "channel.subscription.gift"]),
+            ("Bits", self.config.get("bits_enabled") == "1", ["channel.cheer"]),
+        ]:
+            ready = connected and all(kind in self.listening_types for kind in kinds)
+            rows.append({"name": label, "state": "disabled" if not enabled else "ready" if ready else "attention",
+                         "message": "Disabled" if not enabled else "Listening" if ready else "Not listening — check connection / reconnect Twitch"})
+        return {"connection": dict(self.status), "listeners": rows}
 
     def _watch_stream(self):
         while not self._stop.is_set():
@@ -194,7 +208,9 @@ class TwitchService:
                     if message_type == "session_welcome":
                         session_id = packet["payload"]["session"]["id"]
                         if not seamless_reconnect:
+                            self.listening_types.clear()
                             self._subscribe(session_id)
+                            self.listening_types.add(REDEMPTION_TYPE)
                             self.support_errors = []
                             types = []
                             if self.config.get("subs_enabled") == "1":
@@ -204,6 +220,7 @@ class TwitchService:
                             for kind in types:
                                 try:
                                     self._subscribe(session_id, event_type=kind)
+                                    self.listening_types.add(kind)
                                 except Exception:
                                     self.support_errors.append(kind)
                         seamless_reconnect = False
@@ -215,6 +232,8 @@ class TwitchService:
                     elif message_type == "notification":
                         self.on_notification({**packet.get("payload", {}),
                             "message_id": packet.get("metadata", {}).get("message_id")})
+                    elif message_type == "revocation":
+                        self.listening_types.discard(packet.get("payload", {}).get("subscription", {}).get("type"))
                     elif message_type == "session_reconnect":
                         reconnect_url = packet["payload"]["session"]["reconnect_url"]
                         self._socket.close()

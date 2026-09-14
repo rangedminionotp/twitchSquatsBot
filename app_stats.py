@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 
@@ -19,6 +20,7 @@ class PersistentStats:
             "stream_completed": 0,
             "capture_sessions": {},
             "support_events": {},
+            "activity": [],
         }
         self._load()
         self._stream_status = "unknown"
@@ -34,6 +36,8 @@ class PersistentStats:
                     self._data["owed_squats"] = max(0, int(loaded.get("owed_squats", 0)))
                     self._data["completed_squats"] = max(0, int(loaded.get("completed_squats", 0)))
                 sessions = loaded.get("capture_sessions", {})
+                if isinstance(loaded.get("activity"), list):
+                    self._data["activity"] = loaded["activity"][-100:]
                 self._data["stream_id"] = str(loaded.get("stream_id", ""))
                 self._data["stream_completed"] = max(0, int(loaded.get("stream_completed", 0)))
                 if isinstance(loaded.get("support_events"), dict):
@@ -42,6 +46,15 @@ class PersistentStats:
                     self._data["capture_sessions"] = sessions
         except (OSError, TypeError, ValueError):
             pass
+
+    def _audit(self, kind, amount, reason):
+        self._data["activity"].append({"time": datetime.now(timezone.utc).isoformat(),
+            "kind": kind, "amount": amount, "reason": reason})
+        self._data["activity"] = self._data["activity"][-100:]
+
+    def activity(self):
+        with self._lock:
+            return list(reversed(self._data["activity"]))
 
     def snapshot(self):
         with self._lock:
@@ -72,6 +85,7 @@ class PersistentStats:
                     self._data["stream_completed"] += delta
                 self._data["owed_squats"] = max(0, self._data["owed_squats"] - delta)
                 sessions[capture_session_id] = count
+                self._audit("capture", delta, "Reps completed; owed reduced (minimum zero)")
                 # Keep the persistence file bounded while retaining recent dedupe keys.
                 if len(sessions) > 100:
                     for old_key in list(sessions)[:-100]:
@@ -99,17 +113,20 @@ class PersistentStats:
             raise ValueError("Invalid support event")
         with self._lock:
             if event_key in self._data["support_events"]:
-                return self.snapshot()
+                return {**self.snapshot(), "support_added": False}
             old_owed = self._data["owed_squats"]
+            old_activity = list(self._data["activity"])
             self._data["owed_squats"] += amount
             self._data["support_events"][event_key] = amount
+            self._audit(event_key.split(":", 1)[0], amount, "Added to owed" if amount else "Below one configured unit")
             try:
                 self._save()
             except OSError:
                 self._data["owed_squats"] = old_owed
                 del self._data["support_events"][event_key]
+                self._data["activity"] = old_activity
                 raise
-            return self.snapshot()
+            return {**self.snapshot(), "support_added": True}
 
     def set_counters(self, owed=None, completed=None):
         updates = {}
@@ -121,6 +138,7 @@ class PersistentStats:
             raise ValueError("Provide owed_squats or completed_squats")
         with self._lock:
             self._data.update(updates)
+            self._audit("manual", 0, "Counters set: " + ", ".join(f"{key}={value}" for key, value in updates.items()))
             self._save()
             return self.snapshot()
 

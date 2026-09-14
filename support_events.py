@@ -51,21 +51,49 @@ class SupportService:
         self.status = {s: "Disabled" for s in ("streamlabs", "streamelements")}
         self._workers = {}
         self._lock = threading.RLock()
+        self.recent = []
 
-    def add(self, source, event_id, amount=1, currency=None):
-        if self.config.get(source + "_enabled") != "1" or not event_id:
-            return
-        if currency is not None and str(currency).upper() != self.config.get(source + "_currency"):
-            return
+    def preview(self, source, amount=1, currency=None):
+        if source not in SOURCES:
+            raise ValueError("Unknown source")
+        if self.config.get(source + "_enabled") != "1":
+            return {"delta": 0, "reason": "Source disabled"}
+        if source in ("streamlabs", "streamelements") and str(currency or "").upper() != self.config.get(source + "_currency"):
+            return {"delta": 0, "reason": "Currency does not match saved rule"}
         try:
             amount = number(amount)
+            if source in ("subs", "bits") and amount != amount.to_integral_value():
+                raise ValueError()
             unit = number(self.config.get(source + "_unit", "1"))
-            squats = number(self.config.get(source + "_squats"))
-            delta = int(amount // unit) * int(squats)
+            delta = int(amount // unit) * int(number(self.config.get(source + "_squats")))
         except (ValueError, InvalidOperation, ZeroDivisionError):
+            raise ValueError("Invalid amount or saved rule") from None
+        return {"delta": delta, "reason": "Would add to owed" if delta else "Below one configured unit"}
+
+    def _notice(self, source, reason):
+        with self._lock:
+            self.recent.insert(0, {"source": source, "reason": reason, "time": time.time()})
+            del self.recent[30:]
+
+    def diagnostics(self):
+        with self._lock:
+            return list(self.recent)
+
+    def add(self, source, event_id, amount=1, currency=None):
+        if not event_id:
+            self._notice(source, "Ignored: missing event ID")
+            return
+        try:
+            result = self.preview(source, amount, currency)
+        except ValueError:
+            self._notice(source, "Ignored: invalid amount or rule")
+            return
+        if result["reason"] in ("Source disabled", "Currency does not match saved rule"):
+            self._notice(source, result["reason"])
             return
         account = self.config.get("broadcaster_id") if source in ("subs", "bits") else ""
-        snapshot = self.stats.add_support(f"{source}:{account}:{event_id}", delta)
+        snapshot = self.stats.add_support(f"{source}:{account}:{event_id}", result["delta"])
+        self._notice(source, "Added +" + str(result["delta"]) if snapshot.pop("support_added", False) else "Ignored: duplicate event")
         self.publish(snapshot)
 
     def twitch(self, payload):
@@ -74,6 +102,7 @@ class SupportService:
         if kind not in ("channel.subscribe", "channel.subscription.gift", "channel.cheer"):
             return False
         if event.get("broadcaster_user_id") != self.config.get("broadcaster_id"):
+            self._notice("twitch", "Ignored: different broadcaster")
             return True
         key = payload.get("message_id")
         if kind == "channel.subscribe" and not event.get("is_gift"):

@@ -2449,6 +2449,12 @@ class EventSubHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if parsed_path.path == "/api/diagnostics":
+            self.send_json_response(200, {"health": TWITCH_SERVICE.health(),
+                "providers": dict(SUPPORT_SERVICE.status), "activity": APP_STATS.activity(),
+                "events": SUPPORT_SERVICE.diagnostics()})
+            return
+
         if parsed_path.path == "/api/stats":
             self.send_json_response(200, {"ok": True, **APP_STATS.snapshot()})
             return
@@ -2524,6 +2530,14 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == "/api/test-rule":
+            try:
+                payload = self.read_json_body()
+                result = SUPPORT_SERVICE.preview(payload.get("source"), payload.get("amount", 1), payload.get("currency"))
+                self.send_json_response(200, {"test_only": True, **result})
+            except (ValueError, TypeError, AttributeError) as error:
+                self.send_api_error(ValueError("Invalid test input") if not isinstance(error, ValueError) else error)
+            return
         if parsed_path.path == "/api/settings":
             try:
                 values = self.read_json_body()
