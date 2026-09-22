@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en" style="--page-background: %page_background%; --progress: %percent%%">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twitch Squat Overlay Refresh</title>
+  <link rel="stylesheet" href="/static/overlay/refresh.css">
+</head>
+<body>
+  <main id="overlay" class="overlay %visible_class%">
+    <div class="top">
+      <div>
+        <div class="eyebrow">Live Redeem Challenge</div>
+        <h1>Squat Lock</h1>
+      </div>
+      <div id="pill" class="%pill_class%">%html_escape(pill)%</div>
+    </div>
+    <p id="message" class="message">%html_escape(message)%</p>
+    <div class="count-row">
+      <div>
+        <div id="count" class="count">%squat_count%</div>
+        <div id="target" class="target">of %squat_target% squats</div>
+      </div>
+      <div id="percent" class="target">%percent%%</div>
+    </div>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+    <div class="footer">
+      <span id="viewer">%html_escape(viewer)%</span>
+      <span id="footerStatus">%html_escape(footer_status)%</span>
+    </div>
+  </main>
+  <script type="module" src="/static/overlay/refresh.js"></script>
+</body>
+</html>

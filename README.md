@@ -1,487 +1,305 @@
-# twitchSquatsBot
+# Squat Capture
 
-Small Riot/Twitch utility repo with:
+Developer notes: [Frontend structure and readiness rules](docs/FRONTEND.md).
 
-- a fail-closed Riot gate that checks whether all configured League accounts are out of game
-- a Twitch EventSub listener for channel point redemptions on the connected broadcaster account
-- persistent owed and completed squat counters shown in the control page, capture page, and OBS overlay
+A local Twitch streaming tool that turns Channel Points redemptions into a squat
+queue and tracks the reps you owe and complete. Keep your normal webcam view,
+then switch to pose-based counting when you are ready.
 
-## Windows quick start (recommended)
+**Early-access / source-run app:** there is no packaged installer yet. Automated
+tests do not guarantee camera compatibility or end-to-end delivery from every
+provider. Try it privately before relying on it during a stream.
 
-The app now supports Twitch EventSub over WebSocket, so a local desktop user does
-not need ngrok, a public callback, or an EventSub signing secret.
+[中文使用说明](README.zh-CN.md)
 
-1. Install Python 3.
-2. Squat Capture includes its public Twitch Client ID. No developer setup is needed.
-3. Run:
+## Features
+
+- Twitch sign-in and separate readiness indicators for Channel Points, subs/gifts and Bits.
+- Persistent FIFO redemption queue: start, pause and resume manually.
+- Configurable Sub, Bits, Streamlabs and StreamElements additions to overall owed.
+- Camera Overlay with Webcam and Capture modes, using the same video stream.
+- Separate OBS/Streamlabs counter overlay.
+- Overall owed, per-Twitch-broadcast completed, and internally retained lifetime reps.
+- Recent counter history, safe rule previews, setup guide and startup checks.
+- Browser-local pending rep recovery and duplicate-report protection.
+- Optional League account checks before starting the queue.
+
+## 1. Download and start
+
+You need Python 3, internet access for installation/Twitch/pose-model loading,
+a webcam, a regular Chrome or Edge window, and OBS or Streamlabs Desktop.
+Channel Points features require access to Channel Points rewards on your channel.
+
+Clone this repository or download and extract its ZIP, then open a terminal in
+the project folder. Choose **one** runtime below; Windows and WSL have separate
+home directories and therefore separate default app data.
+
+### Windows — PowerShell
+
+Install Python 3 first, then run:
 
 ```powershell
-.\start_windows.ps1
+.\scripts\start_windows.ps1
 ```
 
-4. Open [http://127.0.0.1:8080/control](http://127.0.0.1:8080/control).
-5. Click **Connect with Twitch**, authorize the app on Twitch, and select
-   the channel point reward to watch.
-6. Open the capture page and add the displayed overlay URL as an OBS Browser Source.
+If PowerShell blocks scripts, an alternative that does not change execution policy is:
 
-The first run creates `.venv` and installs the packages in `requirements.txt`.
-Settings and the Twitch session are stored locally in
-`%USERPROFILE%\.squat-capture\config.json`; keep that file private. The older
-webhook/ngrok setup below is still available for compatibility.
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m squat_capture.startup_check --repair
+.\.venv\Scripts\python.exe -m squat_capture
+```
 
-### WSL
+Run the final command only after startup checks pass. If `py` is unavailable,
+use your installed `python` command for the first step.
 
-From a WSL/bash terminal, use the Linux launcher instead of the PowerShell script:
+### WSL — Bash
+
+Inside WSL, install Linux Python and venv support if needed:
 
 ```bash
-chmod +x start_wsl.sh
-./start_wsl.sh
+sudo apt update
+sudo apt install python3 python3-venv
+bash scripts/start_wsl.sh
 ```
 
-Then open `http://127.0.0.1:8080/control` in the Windows browser. If Python's venv
-module is missing, install it with `sudo apt install python3-venv` and run the
-launcher again.
+Do not run the PowerShell launcher inside Bash. Open the app in your **Windows**
+browser, not inside a Linux desktop.
 
-## What it does
+### What startup does
 
-The League all-idle gate is optional and disabled by default. When enabled, it uses Riot's public APIs:
+The launcher creates a project-local `.venv`, checks dependencies on every launch,
+and attempts to repair missing/incompatible packages and pip. Installation requires
+network access. It also checks data-directory write access. Port conflicts produce
+an error; the app does not kill other processes or silently change ports.
 
-1. `account-v1` resolves every configured `GameName#TagLine` into a PUUID.
-2. `spectator-v5` checks every PUUID for an active League game.
-3. The redeem is accepted only when every configured account is confirmed idle.
+Keep the terminal running. Open:
 
-The gate fails closed: an active account, expired API key, invalid Riot ID, network
-failure, or unexpected API response blocks the redeem instead of accidentally
-allowing it.
+| Page | URL | Purpose |
+|---|---|---|
+| Control panel | http://127.0.0.1:8080/control | Settings, queue, modes and diagnostics |
+| Camera window | http://127.0.0.1:8080/camera-overlay | Regular browser window captured by Streamlabs |
+| Counter overlay | http://127.0.0.1:8080/overlay | OBS/Streamlabs Browser Source |
 
-## Riot Setup
+If you override the `PORT` environment variable, update all three URLs.
+Use the same hostname and port consistently for browser pending-rep recovery.
 
-Open `/control`, enable **League all-idle gate**, paste a Riot development API key,
-and enter one Riot ID per line. Use **Test League gate now** before streaming.
+## 2. First-time setup
 
-`script.py` prints `false` only when all accounts are idle (allow redeem), and
-prints `true` for active or unknown state (block redeem).
+1. Open **Quick setup** on the control panel.
+2. Click **Connect with Twitch** and authorize your broadcaster account.
+   The app includes a public Client ID; normal users do not enter a client secret.
+3. Under **Reward**, select the Channel Points reward and click **Save reward**.
+   Use a clear name such as `10 squats`: the **first number in its title** becomes
+   the target. Without a number, the default is 10 (configurable via
+   `DEFAULT_SQUAT_TARGET`). Avoid putting unrelated numbers first.
+4. Optionally enable sources in **Auto-add squats**, set their rates and save.
+   After first enabling Sub or Bits, reconnect Twitch for the additional permissions.
+5. Check **Connection health**. Successful login alone does not mean listeners
+   are ready. Enabled sources should report that they are listening.
+6. Set up the camera and OBS as described below. The guide's camera and OBS
+   checkboxes are **your confirmation**, not automatic detection.
 
-## Routing notes
+For an existing squat debt, use **Your progress → Adjust totals → Set owed**.
+This replaces the total; it is not an “add this many” button.
 
-- `ACCOUNT_REGION` is `americas`, `asia`, or `europe`
-- `PLATFORM_REGION` is the League shard, such as `na1`, `euw1`, or `kr`
+## 3. Camera and Streamlabs/OBS
 
-Examples:
+**Use two different sources. A camera window and a counter card are not the same thing.**
 
-- North America: routing `americas`, platform `na1`
-- EU West: routing `europe`, platform `euw1`
-- Korea: routing `asia`, platform `kr`
+| What you want on stream | Source type | What to select |
+|---|---|---|
+| Webcam / squat recognition video | **Window Capture** | Chrome/Edge window titled Squat Capture · Camera Overlay |
+| Owed / Completed card | **Browser Source** | `http://127.0.0.1:8080/overlay` |
 
-## Important
+### Camera window
 
-- Do not hardcode your Riot API key in source files.
-- Development keys expire, so if requests suddenly fail, generate a fresh one in the Riot Developer Portal.
+1. Release the webcam from existing Streamlabs/OBS camera sources and other apps.
+   Hiding a source may not release its device; deactivate it or close the competing app.
+2. Open the Camera Overlay URL in a **separate Chrome/Edge window**.
+   Do not use an embedded chat browser or add this URL as a Browser Source.
+3. Click **Start Camera**, allow camera permission, and choose your device.
+   Verify video in the browser before configuring window capture.
+4. Add a **Window Capture** source in Streamlabs/OBS and select that browser window.
+   Crop browser chrome if needed. Keep unrelated/private tabs in another window.
+5. Press **H** in the camera page to hide or show its setup controls.
+   Keep this window open and not minimized.
 
-## Twitch EventSub
+No virtual camera is required. Open only one Camera Overlay and close the older
+`/squat-popup` page. One overlay page owns capture at a time; after closing it,
+wait about eight seconds before starting the camera on another page.
 
-This repo includes [twitch_eventsub_listener.py](/Users/li/github/twitchSquatsBot/twitch_eventsub_listener.py), a webhook listener for Twitch channel point redemptions on `nannersowo`.
+In the control panel:
 
-It listens for:
+- **Webcam**: video only; no pose counting. Also pauses an active queue.
+- **Capture squats**: free exercise; counts reps but does **not** start a paused queue.
+- **Start / resume queue**: switches to Capture and works through queued challenges.
 
-- `channel.channel_points_custom_reward_redemption.add`
+Keep both shoulders and at least one complete leg visible. Try a side or slight
+angle. Current knee-angle thresholds are fixed, not personalized calibration.
+Pose recognition is approximate; check a few reps manually before going live.
 
-The listener:
+### Counter card
 
-- verifies Twitch webhook signatures
-- handles the EventSub verification challenge
-- logs every incoming redemption event
-- prints a simple line like `viewername redeemed reward-title` when the reward matches
-- serves a local squat popup page with webcam-based counting
-- can auto-open the popup page when a matching redemption arrives
-- can gate the popup through `script.py` so redeems only count when the Riot check returns `false`
+Add `/overlay` as a Browser Source. A starting size of **460 × 440** gives the card
+room to expand. This source never needs camera permission. The control panel queue
+is currently the detailed view of queued challenge progress; do not assume every
+queue transition is shown on the older challenge section of the counter overlay.
 
-## Twitch Prereqs
+## 4. How counts and the queue work
 
-You need:
+| Event | Overall Owed | Completed this stream | Challenge queue |
+|---|---|---|---|
+| Matching redemption for N reps | +N, once per redemption ID | Unchanged | Add N-rep challenge |
+| Enabled Sub/Bits/tip event | Add configured amount | Unchanged | Unchanged |
+| One rep during a running queue | −1, minimum zero | +1 when Twitch is known live | Advance FIFO by one |
+| One rep in free Capture | −1, minimum zero | +1 when Twitch is known live | Unchanged |
+| New Twitch broadcast detected | Retained | Reset to zero | Retained |
 
-- a Twitch app `client_id`
-- a Twitch app `client_secret`
-- a broadcaster user access token for `nannersowo`
-- an app access token for creating webhook subscriptions
-- a public HTTPS callback URL, such as an `ngrok` tunnel
-- an EventSub signing secret that you choose yourself
+Queue progress is **part of the same debt**, not a second deduction.
 
-## Twitch App Setup
+- Redemptions queue while the app is running, even with the camera closed.
+- Nothing automatically opens a camera, starts a challenge or soft-locks your game.
+- **Start / resume queue** starts FIFO processing; **Pause · Webcam** preserves progress.
+- Restarting the server retains the queue but starts it paused.
+- When the queue clears, Capture stays on for free exercise. Choose Webcam to stop counting.
+- Free exercise can lower owed without clearing a paused queue.
+- Twitch reward fulfillment/cancellation/refunds are not automated. There are no
+  queue cancellation, reorder or undo controls yet.
 
-Create a Twitch app at:
+Completed follows the Twitch broadcast ID, checked approximately every 15 seconds.
+The same broadcast survives app restarts; offline display retains the last stream.
+When Twitch is offline or unavailable, reps still reduce owed and increment the
+internal lifetime total, but not stream Completed. Late uploads use server state
+at receipt, not historical stream attribution.
 
-- [https://dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps)
+## 5. Sub, Bits and donation rules
 
-Set the OAuth redirect URL to:
+All sources are optional and initially disabled. Save each source's rate before testing.
 
-```text
-http://localhost:3000
-```
+- **Twitch subs:** new and gifted subscriptions; a gift bundle counts each gift once.
+  Automatic renewals / resub chat messages are not counted.
+- **Bits:** whole configured units per event. For example, 100 Bits → 3 reps means
+  250 Bits adds 6, not 7.5.
+- **Streamlabs / StreamElements:** separate amount, currency and rep settings.
+  USD 2.50 → 4 reps means USD 5.01 adds 8. Remainders are discarded per event.
+  Other currencies are ignored; there is no currency conversion.
 
-After the app is created, save:
+Streamlabs needs a Socket API token. StreamElements needs a channel ID and JWT.
+These go in **Connection settings**, not in source code. Blank token inputs keep
+saved credentials. Provider setup references:
 
-- `client_id`
-- `client_secret`
+- [Streamlabs Socket API](https://dev.streamlabs.com/v1/docs/socket-api)
+- [StreamElements WebSockets](https://docs.streamelements.com/websockets)
 
-## Broadcaster User Token
+The app listens live; it does not backfill events missed while offline.
+Refunds do not automatically reverse owed. Do not route the same donation through
+both providers. Provider-generated test alerts may look real and affect counters.
 
-Log into Twitch as `nannersowo`, then open this authorize URL in your browser, replacing `YOUR_CLIENT_ID`:
+**Safe rule test** is different: it only previews the saved conversion rule and
+does not send a payment, change counters, or prove that live events are arriving.
 
-```text
-https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http%3A%2F%2Flocalhost%3A3000&scope=channel%3Aread%3Aredemptions&state=abc123
-```
+## 6. Before and after each stream
 
-Twitch will redirect to `http://localhost:3000/?code=...`. Copy the `code` from the URL and exchange it immediately:
+Before going live:
+
+- Start the server and inspect enabled listeners in **Connection health**.
+- Confirm video, model readiness and actual mode under **Camera Overlay**.
+- Remember that actual mode can differ from the requested mode during loading/errors.
+- Check Owed, selected reward and support rates.
+- Run **Safe rule test**; separately test recognition privately (real reps change counters).
+- Check your Streamlabs/OBS preview and hide camera setup controls.
+
+When finishing:
+
+- Pause the queue or select Webcam.
+- Press H to check the camera page's sync status; wait for **All reps synced**.
+- Close the camera window, then stop the server with Ctrl+C.
+- A KeyboardInterrupt after Ctrl+C is normal.
+
+## 7. Data, recovery and privacy
+
+Default app data directory:
+
+- Native Windows: `%USERPROFILE%\.squat-capture`
+- WSL: `~/.squat-capture` inside the Linux user's home
+- Override: `SQUAT_CAPTURE_DATA_DIR`
+
+`config.json` contains settings and credentials; **keep it private**.
+`stats.json` contains totals, queue, deduplication records and recent counter activity.
+
+For a manual backup, wait for sync, stop the server, and copy these files to a
+private location. Restore with the server stopped. No automatic backup/restore UI
+exists yet. Restoring an old stats file also restores old deduplication history,
+so do not treat rollback as a harmless “undo”.
+
+Camera Overlay saves pending reports in that browser profile's localStorage.
+Reopen the **same origin** (scheme + hostname + port) to retry. Switching
+`127.0.0.1` to `localhost`, changing ports/profiles, clearing site data or closing
+a private-browsing session can prevent recovery. Storage/connection problems pause
+recognition; existing pending reports remain eligible for retry.
+
+Video is processed in the browser; this app does not upload webcam frames to its
+Python server. Model files load from external CDNs. OBS/Streamlabs determines what
+you actually broadcast. Tokens are stored locally, not in a credential vault.
+
+**Do not expose this server publicly.** It currently binds to `0.0.0.0` and its
+control APIs are unauthenticated. Use a trusted local setup and firewall; do not
+port-forward or tunnel it. Normal WebSocket operation needs no public URL/ngrok.
+Legacy webhook code is not the recommended distribution setup.
+
+## 8. Troubleshooting
+
+| Symptom | Check / action |
+|---|---|
+| Login succeeds but subs do not add | Check the specific listener, saved enable switch and rate. Reconnect Twitch after enabling new permissions. Look at Recent activity. |
+| “Missing dependencies” | Stop and rerun the launcher; it checks existing environments too. |
+| “No module named pip” | In the matching venv run `python -m ensurepip --upgrade`, then rerun the launcher. WSL may need its Python-version-matched venv package. |
+| “missing client secret” / authorization failure | Reconnect Twitch. If it recurs, application registration / token refresh needs investigation; do not paste a secret into chat or ship it with the app. |
+| Port 8080 occupied | Check whether an old instance is running. Stop that instance intentionally; do not repeatedly launch duplicates. |
+| Browser video is black | Click Start Camera and check permission/device selection. Release other camera users first. Read the camera page error. |
+| Chrome video works, Streamlabs is black | Verify **Window Capture**, selected Chrome/Edge window and that it is not minimized. An old Browser Source loads a separate page. |
+| “Another camera page owns capture” | Close duplicate Camera Overlay pages, wait about eight seconds, then Start Camera in the remaining one. |
+| Reps not counting | Check actual Capture mode, model readiness, full-body visibility and local saving. Check connection and CDN/model errors. |
+| Completed stays unchanged | Is Twitch detected live? Offline/unknown reps do not increase stream Completed. |
+| Queue not advancing | Use Start / resume queue, not free Capture. Check optional League gate and camera readiness. |
+| Waiting to sync | Keep/reopen the same browser origin, restore the server connection and wait. Do not clear website data. |
+| Rules test passes but no real event arrives | Preview tests arithmetic only. Verify listener status and a genuine event; avoid spending money solely to test. |
+
+**Recent activity** retains the last 100 counter records. Received-support-event
+diagnostics retain the last 30 decisions in memory and reset on restart. Neither
+is a complete historical event archive. Review logs/screenshots for sensitive
+information before sharing them.
+
+### Optional League check
+
+Leave it off if not needed. When enabled, configure the Riot key, account IDs and
+regions in the control panel, then use the account test. It gates **manual queue
+start**, not redemption intake or support accrual. It is not continuous enforcement
+during a challenge. API errors can block starting; this is not a guarantee of
+perfect game-state detection. Streamer Mode/private-account restrictions can limit
+visibility. Never commit a Riot key.
+
+## 9. Current limits and next improvements
+
+This is suitable for guided private testing, not yet a polished public release.
+There is no installer, auto-update, camera calibration wizard, queue undo/cancel UI,
+automatic refund handling or offline event-history sync. Renewals are excluded.
+The legacy `/squat-popup` workflow is not the main workflow described here.
+
+Next priorities: camera calibration, explicit queue corrections, automatic private
+backups, control API protection, and a Windows distribution package. Real camera,
+long-running stream, reconnect and payment-provider tests remain necessary.
+
+## Development checks
+
+From the project environment:
 
 ```bash
-curl -X POST 'https://id.twitch.tv/oauth2/token' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'client_id=YOUR_CLIENT_ID' \
-  -d 'client_secret=YOUR_CLIENT_SECRET' \
-  -d 'code=YOUR_FRESH_CODE' \
-  -d 'grant_type=authorization_code' \
-  -d 'redirect_uri=http://localhost:3000'
+python -m unittest discover -s tests/python -p "test_*.py"
+node tests/javascript/test_camera_outbox.cjs
 ```
 
-That returns:
-
-- `access_token`
-- `refresh_token`
-
-This user token grants your app `channel:read:redemptions` for `nannersowo`.
-
-## Broadcaster User ID
-
-Use the broadcaster token to get `nannersowo`'s user ID:
-
-```bash
-curl -s 'https://api.twitch.tv/helix/users?login=nannersowo' \
-  -H 'Client-Id: YOUR_CLIENT_ID' \
-  -H 'Authorization: Bearer YOUR_BROADCASTER_ACCESS_TOKEN'
-```
-
-The response contains the broadcaster user ID. At the time this README was updated, `nannersowo` resolved to:
-
-```text
-124351362
-```
-
-## App Access Token
-
-Create an app access token with your client ID and client secret:
-
-```bash
-curl -X POST 'https://id.twitch.tv/oauth2/token' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'client_id=YOUR_CLIENT_ID' \
-  -d 'client_secret=YOUR_CLIENT_SECRET' \
-  -d 'grant_type=client_credentials'
-```
-
-Use the returned `access_token` when creating or deleting EventSub webhook subscriptions.
-
-## ngrok Setup
-
-Install ngrok with Homebrew if needed:
-
-```bash
-brew install ngrok/ngrok/ngrok
-```
-
-Add your ngrok auth token once:
-
-```bash
-ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
-```
-
-Start the tunnel:
-
-```bash
-ngrok http 8080
-```
-
-This gives you a public HTTPS URL like:
-
-```text
-https://your-ngrok-url.ngrok-free.dev
-```
-
-Your Twitch callback URL will be:
-
-```text
-https://your-ngrok-url.ngrok-free.dev/eventsub
-```
-
-## Start The Listener
-
-Choose an EventSub secret yourself. It can be any long random string. A good way to generate one is:
-
-```bash
-openssl rand -hex 32
-```
-
-Then start the listener:
-
-```bash
-cd /Users/li/github/twitchSquatsBot
-export TWITCH_EVENTSUB_SECRET='YOUR_EVENTSUB_SECRET'
-export TARGET_REWARD_TITLE='immediately do 10 squats (in queue only'
-export AUTO_OPEN_POPUP='1'
-export RIOT_CHECK_ENABLED='1'
-python3 twitch_eventsub_listener.py
-```
-
-Keep that terminal running.
-
-When the listener starts, it also serves a local popup page at:
-
-```text
-http://127.0.0.1:8080/squat-popup
-```
-
-The popup page:
-
-- asks for webcam access in the browser
-- waits for matching Twitch redemptions
-- counts squat reps locally in-browser using pose landmarks
-- auto-focuses when the listener opens it after a redeem
-
-## Create The EventSub Subscription
-
-With the listener already running and ngrok already running, create the webhook subscription:
-
-```bash
-curl -X POST 'https://api.twitch.tv/helix/eventsub/subscriptions' \
-  -H 'Client-Id: YOUR_CLIENT_ID' \
-  -H 'Authorization: Bearer YOUR_APP_ACCESS_TOKEN' \
-  -H 'Content-Type: application/json' \
-  --data-raw '{"type":"channel.channel_points_custom_reward_redemption.add","version":"1","condition":{"broadcaster_user_id":"124351362"},"transport":{"method":"webhook","callback":"https://your-ngrok-url.ngrok-free.dev/eventsub","secret":"YOUR_EVENTSUB_SECRET"}}'
-```
-
-Notes:
-
-- webhook subscriptions use the app access token, not the broadcaster user token
-- the secret in the subscription must exactly match `TWITCH_EVENTSUB_SECRET`
-- the listener must already be running when you create the subscription
-
-## Check Subscription Status
-
-Check current EventSub subscriptions:
-
-```bash
-curl -s 'https://api.twitch.tv/helix/eventsub/subscriptions' \
-  -H 'Client-Id: YOUR_CLIENT_ID' \
-  -H 'Authorization: Bearer YOUR_APP_ACCESS_TOKEN'
-```
-
-Useful statuses:
-
-- `enabled` means Twitch is actively sending events
-- `webhook_callback_verification_pending` means Twitch is trying to verify the webhook
-- `webhook_callback_verification_failed` means the webhook setup failed and should be deleted/recreated
-
-## Delete A Failed Subscription
-
-Delete a failed subscription by ID:
-
-```bash
-curl -X DELETE 'https://api.twitch.tv/helix/eventsub/subscriptions?id=SUBSCRIPTION_ID_HERE' \
-  -H 'Client-Id: YOUR_CLIENT_ID' \
-  -H 'Authorization: Bearer YOUR_APP_ACCESS_TOKEN'
-```
-
-Then recreate it while the listener is already running.
-
-## Expected Output
-
-When Twitch verifies the webhook, the listener should accept the verification request and stay running.
-
-When someone redeems the matching reward in `nannersowo` chat, the listener prints:
-
-```text
-viewername redeemed immediately do 10 squats (in queue only
-```
-
-It also prints JSON logs for incoming redemption events.
-
-If `AUTO_OPEN_POPUP='1'`, the listener also opens:
-
-```text
-http://127.0.0.1:8080/squat-popup
-```
-
-On that page, allow camera access and keep your full body in frame.
-
-## Riot-Gated Redeem Flow
-
-The current command-line wiring is:
-
-1. A viewer redeems the matching Twitch reward
-2. `twitch_eventsub_listener.py` runs `script.py`
-3. If `script.py` prints `false`, the listener treats the Riot player as idle and adds the squat reward to the popup queue
-4. If `script.py` prints `true`, the listener skips the redeem and logs a `riot_gate` JSON line with `"allowed": false`
-
-By default, the listener runs:
-
-```bash
-python3 script.py
-```
-
-You can override that command if needed:
-
-```bash
-export RIOT_CHECK_COMMAND='python3 script.py'
-```
-
-If you want to disable the Riot gate entirely:
-
-```bash
-export RIOT_CHECK_ENABLED='0'
-```
-
-Important:
-
-- `script.py` currently uses recent public match data as a proxy
-- `false` means "allow squats popup"
-- `true` means "skip because the Riot check thinks the player is still active"
-- this is not a guaranteed live in-game detector, because Riot's public API no longer exposes everything needed for a true spectator check in this setup
-
-Default local callback:
-
-- `http://localhost:8080/eventsub`
-
-For real Twitch delivery, the callback must be publicly reachable over `https`. `ngrok` is the easiest local-development option.
-
-Relevant docs:
-
-- [Handling webhook events](https://dev.twitch.tv/docs/eventsub/handling-webhook-events/)
-- [EventSub subscription types](https://dev.twitch.tv/docs/eventsub/eventsub-subscription-types/)
-- [API reference](https://dev.twitch.tv/docs/api/reference)
-# Auto-add squats from support
-
-## Camera Overlay (manual mode)
-
-### Saved reps and camera readiness
-
-Camera Overlay writes pending cumulative rep reports to browser localStorage before
-sending them. Reopen the same origin in the same browser profile to retry after a
-reload; server-side session deduplication prevents replay from subtracting twice.
-Do not clear site data or switch localhost/127.0.0.1/ports while reports are pending.
-Private browsing, storage exhaustion and clearing site data can defeat recovery.
-The controls show sync state and warn before closing with pending work. Storage or
-connection failure pauses recognition. Already-pending reports can still be retried.
-Late reports use the server's current Twitch session state, not historical backfill.
-
-One Camera Overlay page owns capture at a time via a short server lease. Other
-overlay pages stop their camera and cannot submit new progress until they acquire
-ownership. After closing the owner, wait about eight seconds and click Start Camera
-on the remaining page. This does not manage external webcam apps or legacy capture
-pages: close those manually. Refresh all Camera Overlay pages after upgrading.
-The control panel now distinguishes requested and actual modes, a live video track,
-model readiness, recent body detection, and pending batches. Stale telemetry is hidden
-when the page disconnects. These are browser-reported states, not Streamlabs checks.
-
-Open `/camera-overlay` in a regular browser window. Disable/release Streamlabs'
-camera source and close other capture pages first. Click Start Camera, grant camera
-permission, choose a device, then press H to hide the setup controls. H shows them
-again. Add that browser window to Streamlabs as a **Window Capture**, not a webcam
-or Browser Source. Keep the window open and not minimized; capture the content area.
-
-The control panel's Camera Overlay card switches **Webcam** (video only) and
-**Capture squats** (pose detection, skeleton and rep count). Switching modes keeps
-the same camera stream. Capture reps reduce overall owed and update completed using
-the usual Twitch session rules. The page counter stays cumulative until the window
-is reloaded. Progress retries use the same session ID to avoid duplicate counting.
-Pose detection needs the existing MediaPipe CDN resources; ordinary Webcam mode
-does not need the model. Errors appear in the camera window.
-
-Only open one camera page. Its heartbeat indicates page connectivity, not proof that
-the camera works. Matching Channel Points redeems now enter a persistent FIFO queue,
-even when the camera is closed. The first number in the reward title is the rep
-target (otherwise DEFAULT_SQUAT_TARGET); each redemption adds that target to Owed
-exactly once using its Twitch redemption ID. No automatic popup or game soft-lock
-is triggered. Optional League checks apply when manually starting the queue, not
-when accepting redeems. Twitch fulfillment/refunds are not automated.
-
-In **Challenge queue**, Start / resume queue switches the connected camera page to
-Capture; Pause switches to Webcam. Progress and pending challenges survive restarts,
-which always start paused. Each rep subtracts from Owed only once while advancing
-the queued challenges in order. Sub / Bits / tip additions never join the queue.
-Capture squats alone is free capture and does not start a paused queue. When the
-queue clears, Capture remains on for free exercise until you choose Webcam.
-Queue rep reports retain their run ID so retries and in-flight reports during pause
-can be deduplicated. Keep the camera page open until its reports finish saving.
-Older missed redeems and old popup progress are not backfilled into this queue.
-
-## First run and startup checks
-
-Use `./start_wsl.sh` in WSL or `./start_windows.ps1` in PowerShell. The launchers
-check dependencies even when the virtual environment already exists, bootstrap pip
-with ensurepip if needed, and install requirements only when dependencies are missing
-or incompatible. Repairs require network access and stay inside the virtual environment.
-If ensurepip is unavailable on WSL, install the matching Python venv package first.
-Startup checks also probe data-directory write access. Port conflicts stop startup
-with instructions; they never kill another process or silently switch the OBS URL.
-
-**Quick setup** walks through Twitch, triggers, camera preview and OBS. Twitch and
-selected trigger readiness are checked automatically. Camera and OBS checkboxes are
-manual confirmations, not hardware/OBS detection. Opening capture uses the real
-capture page: completed reps can affect real counters. Progress is saved locally;
-use **Do this later** to collapse the guide and click its heading to reopen it.
-This is not an installer or a public hosting feature.
-
-## Diagnostics and safe testing
-
-The control panel now includes **Connection health**, with separate Channel Points,
-Subs/gifts and Bits listener readiness. **Check again** refreshes the status; it
-does not reconnect or change permissions. Use Connect with Twitch for reauthorization.
-**Recent activity** retains the last 100 counter records across restarts. Its
-received-support-event diagnostics keep the last 30 decisions in memory, including
-duplicate events and ignored amounts. History starts with this version; old events
-cannot be reconstructed. Raw payloads, donor messages and credentials are not logged.
-**Safe rule test** previews saved source rules only, without payments, real counter
-updates or event ingestion. A passing rule preview does not verify provider delivery.
-
-## Counter scopes
-
-Owed is the overall remaining debt across broadcasts. Completed now represents
-the current Twitch broadcast (the last broadcast while offline), not lifetime reps.
-The app checks [Twitch Get Streams](https://dev.twitch.tv/docs/api/reference#get-streams)
-every 15 seconds while connected. A different broadcast ID starts Completed at zero;
-restarting the app, refreshing OBS, or reconnecting to the same ID does not reset it.
-Detection can lag Twitch by the polling interval/API latency. If Twitch is offline
-or its status is unavailable, reps still reduce Owed and increase the internally
-retained lifetime total, but do not increase stream Completed. No retroactive
-attribution is made for reps completed while stream status was unknown.
-Previous all-time counts are preserved internally (`lifetime_squats` in the stats
-API); they are not guessed to belong to the first detected stream. Manual Completed
-corrections now apply only to the stream counter.
-
-In **Auto-add squats**, independently enable Twitch subs, Twitch Bits, Streamlabs,
-and/or StreamElements. Set a squat amount for each source. All are off by default.
-Save rules, then reconnect Twitch after first enabling Sub or Bits so it can grant
-`channel:read:subscriptions` / `bits:read` permissions.
-
-- Subs: each new or gifted subscription adds the configured amount. Gift bundles
-  count each gift once. Automatic renewals / resub chat messages are not counted.
-- Bits: every configured whole unit adds the configured squats.
-- Streamlabs / StreamElements: choose an amount, currency and squat increment for
-  each provider. E.g. per USD 2.50 → 4 squats; USD 5.01 adds 8. Remainders are
-  discarded per event. Other currencies are ignored (no exchange conversion).
-- Streamlabs needs a [Socket API token](https://dev.streamlabs.com/v1/docs/socket-api).
-- StreamElements needs its channel ID and channel JWT, documented under
-  [WebSocket authentication](https://docs.streamelements.com/websockets).
-  The adapter listens to successful `channel.tips` events.
-
-Only **owed** increases; completed stays unchanged. The League gate does not block
-accrual and support does not launch capture. Keep the app running: these are live
-listeners, not an offline payment-history sync. Refunds are not reversed automatically.
-Provider event IDs are saved with counters to prevent replay after restarts.
-Streamlabs/StreamElements mirrored Twitch events are ignored; Twitch handles subs/Bits.
-Do not relay the same payment between donation providers or enable provider test
-alerts against production counters: not all providers mark simulated events.
-
-Tokens are stored in the local config file, masked in the settings API, and never
-included in connection error messages. Keep the control panel local/trusted; do not
-expose its unauthenticated server to the internet. Blank token fields keep saved tokens.
+The second command requires Node.js and uses mocked browser storage/network, not a
+real camera. Passing these tests does not validate Streamlabs window capture or
+live provider credentials.

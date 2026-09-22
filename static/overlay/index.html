@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twitch Squat Overlay</title>
+  <link rel="stylesheet" href="/static/overlay/overlay.css">
+</head>
+<body>
+  
+  <main id="overlay" class="overlay visible" data-state="idle" aria-label="Squat Capture live stats">
+    <div class="top-row">
+      <div class="brand-mark"><span class="mark"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span><div><h1>Squat Capture</h1><div class="eyebrow">EVERY REP COUNTS</div></div></div>
+      <div id="lockPill" class="lock-pill">Standby</div>
+    </div>
+    <div class="totals">
+      <div class="total"><div class="total-label"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Owed</div><strong id="owed">0</strong><small>overall remaining</small></div>
+      <div class="total done"><div class="total-label"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>Completed</div><strong id="completed">0</strong><small id="sessionLabel">checking Twitch session</small></div>
+    </div>
+    <div class="challenge">
+    <div class="count-row">
+      <div class="count-group">
+        <div id="count" class="count">0</div>
+        <div id="target" class="target">/ 0 reps</div>
+      </div>
+      <div id="percent" class="target">0%</div>
+    </div>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+    <p id="message" class="message"></p>
+    </div>
+    <div class="footer">
+      <span id="viewer">Your next rep starts here</span>
+      <span id="status">Ready</span>
+    </div>
+  </main>
+  <script type="module" src="/static/overlay/overlay.js"></script>
+</body>
+</html>

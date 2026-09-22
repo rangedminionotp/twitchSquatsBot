@@ -1,0 +1,11 @@
+import {json, save} from '../api.js';
+import {$, jumpTo, diagnosticRow, escapeHtml} from '../render.js';
+
+export function initCamera(ctx) {
+document.querySelector('#cameraControlStatus + .hint').textContent='Open one camera window, start the camera and use Streamlabs Window Capture. H hides controls. Redeems queue without interrupting you. Start / resume queue begins challenges; Webcam pauses them. Capture squats alone is free capture and does not start a paused queue.';
+async function cameraControl(mode){try{const state=await json('/api/camera',mode?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})}:undefined);const t=state.telemetry||{};const cameraLive=state.page_connected&&t.camera_live;const cameraText=!state.page_connected?'Camera window closed':!t.camera_live?'Camera not started':t.actual_mode==='capture'?(!t.model_ready?'Loading pose model…':!t.body_detected?'Capture · step into frame':'Capture · body detected'):'Webcam is live';$('cameraSummary').textContent=cameraText;$('liveState').textContent=(cameraLive?'● ':'○ ')+cameraText;$('liveState').dataset.ready=String(!!cameraLive);$('cameraControlStatus').textContent=state.page_connected?['Requested: '+state.mode+' · Actual: '+(t.actual_mode||'unknown'),'Camera: '+(t.camera_live?'live':'not started / unavailable'),'Model: '+(t.model_ready?'ready':'not loaded'),'Body: '+(t.actual_mode==='capture'?(t.body_detected?'detected':'not detected'):'not checking in Webcam'),'Saving: '+(!t.storage_ok?'local storage unavailable':t.pending?'waiting to sync '+t.pending+' batch(es)':'all reps synced')].join('\n'):'Camera page disconnected · status unavailable';$('cameraWebcam').setAttribute('aria-pressed',String(state.mode==='webcam'));$('cameraCapture').setAttribute('aria-pressed',String(state.mode==='capture'))}catch(e){$('cameraControlStatus').textContent=e.message;$('cameraSummary').textContent='Camera status unavailable';$('liveState').textContent='○ Camera status unavailable';$('liveState').dataset.ready='false'}}
+$('cameraWebcam').onclick=()=>cameraControl('webcam');$('cameraCapture').onclick=()=>cameraControl('capture');cameraControl();setInterval(()=>cameraControl(),3000);
+
+ctx.cameraControl=cameraControl;
+
+}

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twitch Squat Popup</title>
+  <link rel="stylesheet" href="/static/capture/capture.css">
+<link id="cameraOverlayStyle" rel="stylesheet" href="/static/capture/camera.css" media="not all">
+</head>
+<body>
+  <div class="shell">
+    <section class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlayCanvas"></canvas>
+      <div class="overlay">
+        <div id="banner" class="banner">Waiting for a Twitch redeem...</div>
+        <div class="meter">
+          <div>
+            <div id="count" class="count">0</div>
+            <div id="target" class="target">Target 10 squats</div>
+          </div>
+          <div class="pill-row">
+            <div id="cameraState" class="pill warn">Camera not started</div>
+            <div id="poseState" class="pill bad">Pose idle</div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <aside class="panel">
+      <div>
+        <div class="eyebrow">Live Redeem Trigger</div>
+        <h1 class="title">Squat Counter Popup</h1>
+      </div>
+      <div id="status" class="status">Open this page before stream or let the listener auto-open it when a matching redeem arrives.</div>
+      <div class="card">
+        <strong>Viewer</strong>
+        <span id="viewer">Waiting...</span>
+      </div>
+      <div class="card">
+        <strong>Reward</strong>
+        <span id="reward">No active redeem</span>
+      </div>
+      <div class="card">
+        <strong>Squats Owed</strong>
+        <span id="owedCount">0</span>
+      </div>
+      <div class="card">
+        <strong>Completed · Twitch stream</strong>
+        <span id="completedCount">0</span>
+      </div>
+      <div class="card">
+        <strong>Form Hint</strong>
+        <span id="phase">Stand tall with your full body visible.</span>
+      </div>
+      <div class="form-guide" aria-label="Squat phase guide">
+        <div id="standIndicator" class="form-step active">
+          <strong>1. STAND</strong>
+          <span>Legs nearly straight: 155°+</span>
+        </div>
+        <div id="downIndicator" class="form-step">
+          <strong>2. DOWN</strong>
+          <span>Knees bent to 120° or lower</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="angle-readout">
+          <strong>Knee Bend</strong>
+          <span id="angleValue">--°</span>
+        </div>
+        <div class="depth-track">
+          <div id="depthFill" class="depth-fill"></div>
+        </div>
+        <div class="threshold-labels">
+          <span>Standing 180°</span>
+          <span>Down ≤120°</span>
+        </div>
+      </div>
+      <div class="card">
+        <strong>Camera Device</strong>
+        <div class="camera-picker">
+          <select id="cameraSelect" aria-label="Camera device">
+            <option value="">Start camera to load devices</option>
+          </select>
+          <button id="refreshCamerasButton" class="secondary small-button">Refresh</button>
+        </div>
+      </div>
+      <div id="errorBox" class="error-box"></div>
+      <div id="debugBox" class="debug-box">Debug log starting...</div>
+      <div class="button-row">
+        <button id="startButton">Start Camera</button>
+        <button id="resetButton" class="secondary">Reset Counter</button>
+      </div>
+      <div class="version">Popup version <span id="popupVersion"></span></div>
+      <div class="tiny">
+        This page uses your webcam in-browser and MediaPipe pose landmarks to estimate squat reps. Keep your full body in frame, preferably from the side or slight angle.
+      </div>
+    </aside>
+  </div>
+  <script type="module" src="/static/capture/capture.js"></script>
+</body>
+</html>
