@@ -15,8 +15,12 @@ $VirtualPython = Join-Path $ProjectDir ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $VirtualPython)) {
     Write-Host "Creating local Python environment..."
     & $PythonCommand.Source -m venv .venv
-    & $VirtualPython -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { throw "Could not create Python environment. Install Python from python.org and retry." }
 }
 
-Write-Host "Squat Capture control panel: http://127.0.0.1:8080/control" -ForegroundColor Green
+& $VirtualPython startup_check.py --repair
+if ($LASTEXITCODE -ne 0) { throw "Startup checks failed. See the repair instructions above." }
+
+$AppPort = if ($env:PORT) { $env:PORT } else { "8080" }
+Write-Host "Squat Capture control panel: http://127.0.0.1:$AppPort/control" -ForegroundColor Green
 & $VirtualPython twitch_eventsub_listener.py

@@ -15,8 +15,9 @@ fi
 if [[ ! -x .venv/bin/python ]]; then
   echo "Creating local Python environment..."
   "$WSL_PYTHON" -m venv .venv
-  .venv/bin/python -m pip install -r requirements.txt
 fi
 
-echo "Squat Capture control panel: http://127.0.0.1:8080/control"
+.venv/bin/python startup_check.py --repair
+
+echo "Squat Capture control panel: http://127.0.0.1:${PORT:-8080}/control"
 exec .venv/bin/python twitch_eventsub_listener.py

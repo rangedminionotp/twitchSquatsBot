@@ -9,6 +9,9 @@ from support_events import SUPPORT_DEFAULTS, validate_support_settings
 TWITCH_CLIENT_ID = "hjfh8olacuo9dwyrwgbiqmkzsk92ri"
 
 DEFAULTS = {
+    "setup_camera_confirmed": "0",
+    "setup_obs_confirmed": "0",
+    "setup_dismissed": "0",
     **SUPPORT_DEFAULTS,
     "twitch_client_id": TWITCH_CLIENT_ID,
     "broadcaster_avatar": "",

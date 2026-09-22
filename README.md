@@ -360,6 +360,77 @@ Relevant docs:
 - [API reference](https://dev.twitch.tv/docs/api/reference)
 # Auto-add squats from support
 
+## Camera Overlay (manual mode)
+
+### Saved reps and camera readiness
+
+Camera Overlay writes pending cumulative rep reports to browser localStorage before
+sending them. Reopen the same origin in the same browser profile to retry after a
+reload; server-side session deduplication prevents replay from subtracting twice.
+Do not clear site data or switch localhost/127.0.0.1/ports while reports are pending.
+Private browsing, storage exhaustion and clearing site data can defeat recovery.
+The controls show sync state and warn before closing with pending work. Storage or
+connection failure pauses recognition. Already-pending reports can still be retried.
+Late reports use the server's current Twitch session state, not historical backfill.
+
+One Camera Overlay page owns capture at a time via a short server lease. Other
+overlay pages stop their camera and cannot submit new progress until they acquire
+ownership. After closing the owner, wait about eight seconds and click Start Camera
+on the remaining page. This does not manage external webcam apps or legacy capture
+pages: close those manually. Refresh all Camera Overlay pages after upgrading.
+The control panel now distinguishes requested and actual modes, a live video track,
+model readiness, recent body detection, and pending batches. Stale telemetry is hidden
+when the page disconnects. These are browser-reported states, not Streamlabs checks.
+
+Open `/camera-overlay` in a regular browser window. Disable/release Streamlabs'
+camera source and close other capture pages first. Click Start Camera, grant camera
+permission, choose a device, then press H to hide the setup controls. H shows them
+again. Add that browser window to Streamlabs as a **Window Capture**, not a webcam
+or Browser Source. Keep the window open and not minimized; capture the content area.
+
+The control panel's Camera Overlay card switches **Webcam** (video only) and
+**Capture squats** (pose detection, skeleton and rep count). Switching modes keeps
+the same camera stream. Capture reps reduce overall owed and update completed using
+the usual Twitch session rules. The page counter stays cumulative until the window
+is reloaded. Progress retries use the same session ID to avoid duplicate counting.
+Pose detection needs the existing MediaPipe CDN resources; ordinary Webcam mode
+does not need the model. Errors appear in the camera window.
+
+Only open one camera page. Its heartbeat indicates page connectivity, not proof that
+the camera works. Matching Channel Points redeems now enter a persistent FIFO queue,
+even when the camera is closed. The first number in the reward title is the rep
+target (otherwise DEFAULT_SQUAT_TARGET); each redemption adds that target to Owed
+exactly once using its Twitch redemption ID. No automatic popup or game soft-lock
+is triggered. Optional League checks apply when manually starting the queue, not
+when accepting redeems. Twitch fulfillment/refunds are not automated.
+
+In **Challenge queue**, Start / resume queue switches the connected camera page to
+Capture; Pause switches to Webcam. Progress and pending challenges survive restarts,
+which always start paused. Each rep subtracts from Owed only once while advancing
+the queued challenges in order. Sub / Bits / tip additions never join the queue.
+Capture squats alone is free capture and does not start a paused queue. When the
+queue clears, Capture remains on for free exercise until you choose Webcam.
+Queue rep reports retain their run ID so retries and in-flight reports during pause
+can be deduplicated. Keep the camera page open until its reports finish saving.
+Older missed redeems and old popup progress are not backfilled into this queue.
+
+## First run and startup checks
+
+Use `./start_wsl.sh` in WSL or `./start_windows.ps1` in PowerShell. The launchers
+check dependencies even when the virtual environment already exists, bootstrap pip
+with ensurepip if needed, and install requirements only when dependencies are missing
+or incompatible. Repairs require network access and stay inside the virtual environment.
+If ensurepip is unavailable on WSL, install the matching Python venv package first.
+Startup checks also probe data-directory write access. Port conflicts stop startup
+with instructions; they never kill another process or silently switch the OBS URL.
+
+**Quick setup** walks through Twitch, triggers, camera preview and OBS. Twitch and
+selected trigger readiness are checked automatically. Camera and OBS checkboxes are
+manual confirmations, not hardware/OBS detection. Opening capture uses the real
+capture page: completed reps can affect real counters. Progress is saved locally;
+use **Do this later** to collapse the guide and click its heading to reopen it.
+This is not an installer or a public hosting feature.
+
 ## Diagnostics and safe testing
 
 The control panel now includes **Connection health**, with separate Channel Points,

@@ -1,5 +1,7 @@
 import json
 import os
+import copy
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -21,9 +23,13 @@ class PersistentStats:
             "capture_sessions": {},
             "support_events": {},
             "activity": [],
+            "redemption_queue": [],
+            "redemption_ids": {},
+            "queue_runs": [],
         }
         self._load()
         self._stream_status = "unknown"
+        self._queue_active = False
 
     def _load(self):
         try:
@@ -36,6 +42,9 @@ class PersistentStats:
                     self._data["owed_squats"] = max(0, int(loaded.get("owed_squats", 0)))
                     self._data["completed_squats"] = max(0, int(loaded.get("completed_squats", 0)))
                 sessions = loaded.get("capture_sessions", {})
+                for key, kind in (("redemption_queue", list), ("redemption_ids", dict), ("queue_runs", list)):
+                    if isinstance(loaded.get(key), kind):
+                        self._data[key] = loaded[key]
                 if isinstance(loaded.get("activity"), list):
                     self._data["activity"] = loaded["activity"][-100:]
                 self._data["stream_id"] = str(loaded.get("stream_id", ""))
@@ -67,7 +76,44 @@ class PersistentStats:
                 "lifetime_squats": self._data["completed_squats"],
             }
 
-    def record_count(self, capture_session_id, count):
+    def queue_snapshot(self):
+        with self._lock:
+            return {"items": copy.deepcopy(self._data["redemption_queue"]), "active": self._queue_active,
+                    "run": self._data["queue_runs"][-1] if self._queue_active and self._data["queue_runs"] else None}
+
+    def enqueue(self, redemption_id, viewer, title, target):
+        if not redemption_id or not isinstance(target, int) or not 1 <= target <= 1000000:
+            raise ValueError("Invalid redemption")
+        with self._lock:
+            if redemption_id in self._data["redemption_ids"]:
+                return self.queue_snapshot()
+            before = copy.deepcopy(self._data)
+            self._data["redemption_ids"][redemption_id] = True
+            self._data["redemption_queue"].append({"id": redemption_id, "viewer": viewer, "title": title, "target": target, "done": 0})
+            self._data["owed_squats"] += target
+            self._audit("redemption", target, "Queued; added to owed")
+            try:
+                self._save()
+            except OSError:
+                self._data = before
+                raise
+            return self.queue_snapshot()
+
+    def set_queue_active(self, active):
+        with self._lock:
+            if active and not self._data["redemption_queue"]:
+                raise ValueError("Queue is empty")
+            if active and not self._queue_active:
+                self._data["queue_runs"].append(uuid.uuid4().hex)
+                try:
+                    self._save()
+                except OSError:
+                    self._data["queue_runs"].pop()
+                    raise
+            self._queue_active = bool(active)
+            return self.queue_snapshot()
+
+    def record_count(self, capture_session_id, count, queue_run=None):
         if not capture_session_id:
             return self.snapshot()
         try:
@@ -79,6 +125,8 @@ class PersistentStats:
             sessions = self._data["capture_sessions"]
             previous = max(0, int(sessions.get(capture_session_id, 0)))
             if count > previous:
+                before = copy.deepcopy(self._data)
+                was_active = self._queue_active
                 delta = count - previous
                 self._data["completed_squats"] += delta
                 if self._stream_status == "live":
@@ -86,11 +134,29 @@ class PersistentStats:
                 self._data["owed_squats"] = max(0, self._data["owed_squats"] - delta)
                 sessions[capture_session_id] = count
                 self._audit("capture", delta, "Reps completed; owed reduced (minimum zero)")
+                if queue_run and queue_run in self._data["queue_runs"]:
+                    remaining = delta
+                    while remaining and self._data["redemption_queue"]:
+                        head = self._data["redemption_queue"][0]
+                        used = min(remaining, head["target"] - head["done"])
+                        head["done"] += used
+                        remaining -= used
+                        if head["done"] == head["target"]:
+                            self._audit("queue_complete", head["target"], "Queued challenge completed")
+                            self._data["redemption_queue"].pop(0)
+                    if not self._data["redemption_queue"]:
+                        self._queue_active = False
                 # Keep the persistence file bounded while retaining recent dedupe keys.
                 if len(sessions) > 100:
                     for old_key in list(sessions)[:-100]:
-                        sessions.pop(old_key, None)
-                self._save()
+                        if not old_key.startswith('camera:'):
+                            sessions.pop(old_key, None)
+                try:
+                    self._save()
+                except OSError:
+                    self._data = before
+                    self._queue_active = was_active
+                    raise
             return self.snapshot()
 
     def observe_stream(self, stream_id=None, status="unknown"):

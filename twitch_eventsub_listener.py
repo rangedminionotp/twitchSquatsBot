@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from app_config import APP_CONFIG
 from app_stats import APP_STATS
 from control_panel import CONTROL_HTML
+from camera_overlay import CAMERA_CONTROL, CAMERA_STYLE
 from twitch_eventsub_websocket import TwitchService
 from support_events import SupportService
 
@@ -445,6 +446,27 @@ POPUP_HTML = """<!DOCTYPE html>
     const squatProgressPath = "%SQUAT_PROGRESS_PATH%";
     const squatCompletePath = "%SQUAT_COMPLETE_PATH%";
     const defaultSquatTarget = Number("%DEFAULT_SQUAT_TARGET%") || 10;
+    const isCameraOverlay = location.pathname === '/camera-overlay';
+    let cameraMode = 'webcam';
+    let cameraModeBusy = false;
+    let queueTicket = null;
+    const cameraCounts = new Map();
+    const cameraPending = new Map();
+    let savingCamera = false;
+    const cameraPageId = crypto.randomUUID();
+    let cameraLeaseUntil = 0, cameraStorageOk = true, lastBodySeen = 0;
+    const outboxPrefix = 'squat-camera-outbox-v1:';
+    function persistCamera(payload){
+      try{localStorage.setItem(outboxPrefix+payload.capture_session_id,JSON.stringify(payload));cameraStorageOk=true;return true}
+      catch(e){cameraStorageOk=false;cameraMode='webcam';showError('Local saving unavailable. Capture paused; free browser storage before continuing.');return false}
+    }
+    function recoverCamera(){
+      try{for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(!key.startsWith(outboxPrefix))continue;const p=JSON.parse(localStorage.getItem(key));if(p&&typeof p.capture_session_id==='string'&&Number.isInteger(p.count)&&p.count>=0)cameraPending.set(p.capture_session_id,p)}cameraStorageOk=true}catch(e){cameraStorageOk=false;showError('Cannot recover saved reps. Capture paused; do not clear site data.')}
+    }
+    async function flushCameraCounts(){
+      if(savingCamera||Date.now()>=cameraLeaseUntil)return;savingCamera=true;
+      try{for(const [key,payload] of cameraPending){if(!persistCamera(payload))throw Error('Local saving unavailable');const r=await fetch('/api/camera/progress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,page_id:cameraPageId}),signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Could not save reps; retrying');if(cameraPending.get(key)===payload){localStorage.removeItem(outboxPrefix+payload.capture_session_id);cameraPending.delete(key)}}}finally{savingCamera=false}
+    }
     const captureSessionId = window.crypto && window.crypto.randomUUID
       ? window.crypto.randomUUID()
       : String(Date.now()) + Math.random();
@@ -735,6 +757,7 @@ POPUP_HTML = """<!DOCTYPE html>
     }
 
     function onPoseResults(results) {
+      if (isCameraOverlay && (cameraMode !== 'capture' || Date.now()>=cameraLeaseUntil || !cameraStorageOk)) return;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvasContext.clearRect(0, 0, canvas.width, canvas.height);
@@ -746,6 +769,7 @@ POPUP_HTML = """<!DOCTYPE html>
       }
 
       const landmarks = results.poseLandmarks;
+      lastBodySeen = Date.now();
       window.drawConnectors(canvasContext, landmarks, window.POSE_CONNECTIONS, {
         color: "#66f0c9",
         lineWidth: 4,
@@ -933,9 +957,10 @@ POPUP_HTML = """<!DOCTYPE html>
     }
 
     async function startCamera() {
+      if(isCameraOverlay&&Date.now()>=cameraLeaseUntil){showError('Another camera page is active, or the server is unavailable. Close other camera pages and wait a few seconds.');return;}
       debugLog("start camera clicked");
       clearError();
-      await ensurePoseLandmarker();
+      if (!isCameraOverlay || cameraMode === 'capture') await ensurePoseLandmarker();
       await openCamera(cameraSelectEl.value || "");
     }
 
@@ -1034,6 +1059,16 @@ POPUP_HTML = """<!DOCTYPE html>
         if (upCandidateFrames >= stableFramesRequired) {
           if (lastDepth === "down" && cooldownFrames === 0) {
             squatCount += 1;
+            if (isCameraOverlay) {
+              countEl.textContent = String(squatCount);
+              const segment=queueTicket||'free';
+              const total=(cameraCounts.get(segment)||0)+1;cameraCounts.set(segment,total);
+              const payload={capture_session_id:captureSessionId+':'+segment,count:total,queue_run:queueTicket};
+              cameraPending.set(payload.capture_session_id,payload);persistCamera(payload);
+              flushCameraCounts().catch(e=>showError(e.message));
+              lastDepth = 'up'; squatPhase = 'up'; cooldownFrames = 12;
+              return;
+            }
             cooldownFrames = 12;
             const target = squatTargetTotal;
             if (squatCount >= target) {
@@ -1071,12 +1106,16 @@ POPUP_HTML = """<!DOCTYPE html>
     }
 
     async function renderLoop() {
+      if(isCameraOverlay&&!streamStarted){requestAnimationFrame(renderLoop);return;}
+      if (isCameraOverlay && (cameraMode !== 'capture' || !poseDetector)) { requestAnimationFrame(renderLoop); return; }
       if (!streamStarted || !poseDetector) return;
       if (video.currentTime !== lastVideoTime && !poseFrameInFlight) {
         poseFrameInFlight = true;
         try {
           await poseDetector.send({ image: video });
           lastVideoTime = video.currentTime;
+        } catch (error) {
+          showError('Pose detection failed: ' + error.message);
         } finally {
           poseFrameInFlight = false;
         }
@@ -1143,7 +1182,49 @@ POPUP_HTML = """<!DOCTYPE html>
     window.addEventListener("unhandledrejection", function (event) {
       showError("Unhandled promise rejection:" + newline + event.reason);
     });
-    connectEventStream();
+    if (!isCameraOverlay) connectEventStream();
+    if (isCameraOverlay) {
+      document.title='Squat Capture · Camera Overlay';
+      document.body.dataset.cameraMode='webcam';
+      const tools=document.createElement('div');tools.id='cameraTools';
+      const help=document.createElement('p');help.textContent='Release your camera in Streamlabs first. Start here, then window-capture this page. H toggles controls; keep this window open, not minimized.';
+      const hide=document.createElement('button');hide.textContent='Hide controls (H)';hide.onclick=()=>document.body.classList.add('clean');
+      tools.append(help,startButton,cameraSelectEl,refreshCamerasButton,hide);document.body.append(tools);
+      const warning=document.createElement('div');warning.id='cameraWarning';document.body.append(warning);
+      const syncInfo=document.createElement('p');syncInfo.setAttribute('role','status');tools.append(syncInfo);
+      recoverCamera();
+      window.addEventListener('beforeunload',e=>{if(cameraPending.size){e.preventDefault();e.returnValue=''}});
+      document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='h'&&!['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName))document.body.classList.toggle('clean')});
+      async function cameraHeartbeat(){
+        if(cameraModeBusy)return;cameraModeBusy=true;
+        try{
+          syncInfo.textContent=cameraPending.size?'Waiting to sync · '+cameraPending.size+' saved batches':'All reps synced';
+          const response=await fetch('/api/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({heartbeat:true,page_id:cameraPageId,telemetry:{camera_live:!!cameraStream?.getVideoTracks().some(t=>t.readyState==='live'&&!t.muted),model_ready:!!poseDetector,body_detected:Date.now()-lastBodySeen<2000,storage_ok:cameraStorageOk,actual_mode:cameraMode,pending:cameraPending.size}}),signal:AbortSignal.timeout(4000)});
+          if(!response.ok)throw Error('Control connection unavailable');
+          const state=await response.json();
+          if(!state.owns_camera){cameraLeaseUntil=0;stopCameraStream();streamStarted=false;throw Error('Another camera page owns capture. Close it and wait 8 seconds, then Start Camera here.');}
+          cameraLeaseUntil=Date.now()+3500;
+          if(!cameraStorageOk&&cameraPending.size===0)throw Error('Local storage unavailable; capture disabled');
+          await flushCameraCounts();
+          const newTicket=state.queue?.run||null;
+          if(newTicket!==queueTicket){lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;queueTicket=newTicket;}
+          if(state.mode!==cameraMode){
+            // Disable counting while the model loads or a mode change is pending.
+            cameraMode='webcam';document.body.dataset.cameraMode='webcam';
+            lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;cooldownFrames=0;
+            if(state.mode==='capture')await ensurePoseLandmarker();
+            cameraMode=state.mode;document.body.dataset.cameraMode=cameraMode;
+            bannerEl.textContent='Squat capture';targetEl.textContent='reps this window';
+          }
+          const head=state.queue?.items?.[0];
+          if(queueTicket&&head){bannerEl.textContent=head.viewer+' · '+head.title;targetEl.textContent=head.done+' / '+head.target+' · queued challenge';}
+          else{bannerEl.textContent='Free capture';targetEl.textContent='reps this window';}
+          warning.textContent=errorBoxEl ? errorBoxEl.textContent : '';
+        }catch(e){cameraLeaseUntil=0;cameraMode='webcam';lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;document.body.dataset.cameraMode='webcam';warning.textContent='Capture paused: '+e.message}
+        finally{cameraModeBusy=false}
+      }
+      cameraHeartbeat();setInterval(cameraHeartbeat,1500);
+    }
     fetch("/api/stats").then(function (response) { return response.json(); }).then(function (stats) {
       owedCountEl.textContent = String(stats.owed_squats || 0);
       completedCountEl.textContent = String(stats.completed_squats || 0);
@@ -1647,6 +1728,8 @@ def extract_squat_target(reward_title):
 
 
 def maybe_open_popup():
+    if CAMERA_CONTROL.snapshot()["page_connected"]:
+        return
     if not AUTO_OPEN_POPUP:
         return
 
@@ -2192,8 +2275,31 @@ def get_matching_redemption(payload):
 
 
 def process_eventsub_notification(payload):
+    if SUPPORT_SERVICE.twitch(payload):
+        return
+    if payload.get('subscription', {}).get('type') != 'channel.channel_points_custom_reward_redemption.add':
+        return
+    matched = get_matching_redemption(payload)
+    if not matched:
+        return
+    event = payload.get('event', {})
+    if not event.get('id') or event.get('status') == 'canceled':
+        return
+    import re
+    amount = re.search(r'\d+', matched.get('reward_title') or '')
+    target = int(amount.group()) if amount else DEFAULT_SQUAT_TARGET
+    APP_STATS.enqueue(str(event.get('broadcaster_user_id', '')) + ':' + event['id'],
+                      matched.get('user_name') or matched.get('user_login') or 'Viewer',
+                      matched.get('reward_title') or 'Squats', target)
+    OVERLAY_STATE.publish(APP_STATS.snapshot())
+
+
+def legacy_process_eventsub_notification(payload):
     """Shared notification path for WebSocket and legacy webhook transports."""
     if SUPPORT_SERVICE.twitch(payload):
+        return
+    if CAMERA_CONTROL.snapshot()["page_connected"]:
+        publish_overlay_skipped("Camera Overlay is in manual mode; switch to Capture in /control", "", "")
         return
     summary = summarize_redemption(payload)
     print(json.dumps({"incoming_redemption": summary}), flush=True)
@@ -2291,7 +2397,7 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def serve_popup_page(self):
         html = (
-            POPUP_HTML
+            (POPUP_HTML.replace('</head>', CAMERA_STYLE + '</head>') if urlparse(self.path).path == '/camera-overlay' else POPUP_HTML)
             .replace("%POPUP_EVENTS_PATH%", POPUP_EVENTS_PATH)
             .replace("%SQUAT_PROGRESS_PATH%", SQUAT_PROGRESS_PATH)
             .replace("%SQUAT_COMPLETE_PATH%", SQUAT_COMPLETE_PATH)
@@ -2493,7 +2599,15 @@ class EventSubHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if parsed_path.path == POPUP_PATH or parsed_path.path == "/":
+        if parsed_path.path == "/api/camera":
+            self.send_json_response(200, {**CAMERA_CONTROL.snapshot(), "queue": APP_STATS.queue_snapshot()})
+            return
+
+        if parsed_path.path == "/api/queue":
+            self.send_json_response(200, APP_STATS.queue_snapshot())
+            return
+
+        if parsed_path.path == POPUP_PATH or parsed_path.path in ("/", "/camera-overlay"):
             self.serve_popup_page()
             return
 
@@ -2530,6 +2644,48 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == "/api/camera":
+            try:
+                payload = self.read_json_body()
+                camera = CAMERA_CONTROL.update(payload)
+                if payload.get('mode') == 'webcam':
+                    APP_STATS.set_queue_active(False)
+                self.send_json_response(200, {**camera, "queue": APP_STATS.queue_snapshot()})
+            except (ValueError, TypeError) as error:
+                self.send_api_error(error)
+            return
+        if parsed_path.path == "/api/queue":
+            try:
+                action = self.read_json_body().get('action')
+                if action not in ('start', 'pause'):
+                    raise ValueError('Choose start or pause')
+                if action == 'start':
+                    if not CAMERA_CONTROL.snapshot().get('telemetry', {}).get('camera_live'):
+                        raise ValueError('Open Camera Overlay and start the camera first')
+                    allowed, reason = should_trigger_popup_from_riot_check()
+                    if not allowed:
+                        raise ValueError('League check: ' + reason)
+                queue = APP_STATS.set_queue_active(action == 'start')
+                CAMERA_CONTROL.update({'mode': 'capture' if action == 'start' else 'webcam'})
+                self.send_json_response(200, queue)
+            except ValueError as error:
+                self.send_api_error(error)
+            return
+        if parsed_path.path == "/api/camera/progress":
+            try:
+                payload = self.read_json_body()
+                if not CAMERA_CONTROL.owns(payload.get('page_id')):
+                    raise ValueError('Camera ownership expired; reconnect before syncing')
+                count = payload.get("count")
+                session = payload.get("capture_session_id")
+                if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 1000000 or not isinstance(session, str) or not 1 <= len(session) <= 100:
+                    raise ValueError("Invalid camera progress")
+                stats = APP_STATS.record_count("camera:" + session, count, payload.get('queue_run'))
+                OVERLAY_STATE.publish(stats)
+                self.send_json_response(200, stats)
+            except (ValueError, TypeError) as error:
+                self.send_api_error(error)
+            return
         if parsed_path.path == "/api/test-rule":
             try:
                 payload = self.read_json_body()
@@ -2693,7 +2849,14 @@ class EventSubHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if SUPPORT_SERVICE.twitch({**payload, "message_id": message_id}):
+        if message_type == 'notification':
+            process_eventsub_notification({**payload, "message_id": message_id})
+            self.send_response(204)
+            self.end_headers()
+            return
+
+        if CAMERA_CONTROL.snapshot()["page_connected"]:
+            publish_overlay_skipped("Camera Overlay is in manual mode; switch to Capture in /control", "", "")
             self.send_response(204)
             self.end_headers()
             return
@@ -2797,7 +2960,18 @@ class EventSubHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = ThreadingHTTPServer((HOST, PORT), EventSubHandler)
+    from startup_check import dependency_errors, check_storage
+    if dependency_errors():
+        print("Startup blocked: missing / incompatible dependencies. Run start_wsl.sh or start_windows.ps1 to repair.", file=sys.stderr)
+        return 1
+    if not check_storage():
+        print("Startup blocked: cannot write app data. Check directory permissions and free disk space.", file=sys.stderr)
+        return 1
+    try:
+        server = ThreadingHTTPServer((HOST, PORT), EventSubHandler)
+    except OSError:
+        print(f"Cannot listen on {HOST}:{PORT}. Another instance may already be running. Check http://127.0.0.1:{PORT}/control, or stop the old instance. No process was stopped automatically.", file=sys.stderr)
+        return 1
     TWITCH_SERVICE.start()
     SUPPORT_SERVICE.start()
     print(
@@ -2831,4 +3005,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
