@@ -12,3 +12,15 @@ summary{display:flex;align-items:center;gap:12px;cursor:pointer;list-style:none}
 .stat{position:relative;padding:22px;background:linear-gradient(130deg,#ffb36b0d,#0b111a);overflow:hidden}.stat.done{background:linear-gradient(130deg,#68efd012,#0b111a)}.stat>.icon{position:absolute;right:16px;top:18px;opacity:.55}.stat.owed{color:#ffb36b}.stat.done{color:var(--mint)}.stat strong{font-size:clamp(36px,5vw,58px);font-variant-numeric:tabular-nums;letter-spacing:-.04em;margin-top:14px;overflow-wrap:anywhere}.stat-grid{grid-template-columns:1fr 1fr}
 .quick-link{padding:18px 14px}.quick-link:first-child{background:var(--mint);color:#06100e;border-color:transparent}.link-label,.privacy{display:flex;align-items:center;gap:12px}.privacy{justify-content:center;background:transparent;font-size:12px}.privacy .icon{width:16px;height:16px}.status:empty{display:none}.status{font-size:13px}.switch input:focus-visible+.slider,summary:focus-visible,.btn:focus-visible,.quick-link:focus-visible{outline:2px solid var(--mint);outline-offset:4px}
 @media(max-width:860px){.layout{grid-template-columns:1fr}.side{order:-1}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Keep native select semantics; replace only the closed control's arrow. */
+a[href],button:not(:disabled),summary,select:not(:disabled),input[type="checkbox"]:not(:disabled),input[type="radio"]:not(:disabled),.switch,.slider,[role="button"]{cursor:pointer}
+select.control{appearance:none;-webkit-appearance:none;padding-right:44px;background-image:var(--dropdown-chevron);background-repeat:no-repeat;background-position:right 14px center;background-size:20px 20px}
+select.control:not(:disabled):hover{border-color:var(--mint2)}
+select.control:disabled,button:disabled,.switch:has(input:disabled),.switch:has(input:disabled) .slider{cursor:not-allowed}
+@media(forced-colors:active){select.control{appearance:auto;-webkit-appearance:auto;background-image:none}}
+
+:root{--dropdown-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%239bb0c1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")}
+.chevron,summary:not(:has(.chevron))::after{width:20px;height:20px;flex:0 0 20px;background:var(--dropdown-chevron) center/20px 20px no-repeat;font-size:0;transition:transform .2s}
+summary:not(:has(.chevron))::after{content:"";margin-left:auto}
+details[open]>summary:not(:has(.chevron))::after{transform:rotate(180deg)}

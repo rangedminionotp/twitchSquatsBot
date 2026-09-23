@@ -14,9 +14,6 @@ export function initStatus() {
   let snapshots = {};
   function render() {
     const status = deriveStatus(snapshots);
-    $('connectionShort').textContent = status.label;
-    $('connectionPill').className = 'connection-pill' + (status.ready ? ' online' : '');
-    $('connectionPill').title = status.detail;
     detail.textContent = status.detail;
     repair.hidden = !status.target;
     repair.onclick = () => {

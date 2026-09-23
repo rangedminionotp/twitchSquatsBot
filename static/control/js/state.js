@@ -15,6 +15,44 @@ export function subscribe(listener) {
   return () => listeners.delete(listener);
 }
 
+// Saved identity/token and the live socket are different facts. A dropped
+// connection must not turn an existing streamer's dashboard into a first run.
+export function deriveAccount(entry, diagnostics, now = Date.now()) {
+  if (!entry) return {kind: 'loading', label: 'Checking Twitch…', action: 'Connect with Twitch', connected: false};
+  if (entry.error || now - entry.time > 25000) return {kind: 'unavailable', label: 'Twitch status unavailable', action: 'Check connection', connected: false};
+  const {settings, twitch} = entry.data;
+  const known = !!(settings.twitch_access_token || settings.broadcaster_login);
+  const connected = twitch.state === 'connected';
+  const pending = twitch.auth_state === 'pending' || twitch.state === 'authorizing';
+  const name = settings.broadcaster_login || 'your account';
+  const required = ['Channel Points', settings.subs_enabled === '1' && 'Subs / gifts', settings.bits_enabled === '1' && 'Bits'].filter(Boolean);
+  const rows = diagnostics?.health?.listeners;
+  const listening = connected && Array.isArray(rows) && required.every(name => rows.some(row => row.name === name && row.state === 'ready'));
+  const review = connected && Array.isArray(rows) && !listening;
+  return {
+    kind: pending ? 'pending' : connected ? (review ? 'review' : 'connected') : known ? 'interrupted' : 'new',
+    known, connected, listening, name,
+    label: pending ? 'Waiting for Twitch authorization' : connected ? (review ? 'Twitch connection interrupted · Fix' : listening ? 'Twitch connected as ' + name : 'Twitch connected · checking listeners') : known ? 'Twitch connection interrupted' : 'Twitch not connected',
+    action: pending ? 'Authorization in progress…' : connected ? (review ? 'Review Twitch permissions' : 'Manage Twitch connection') : known ? 'Reconnect Twitch' : 'Connect with Twitch'
+  };
+}
+
+export function cameraPresentation(camera) {
+  const t = camera.telemetry || {};
+  const result = (label, detail, ready = false, error = false) => ({label, detail, ready, error});
+  if (!camera.page_connected) return result('Window closed', 'Open the camera window to check your framing.');
+  if (t.error_code === 'permission_denied') return result('Permission denied', 'Allow camera access in the camera window, then retry Start Camera.', false, true);
+  if (t.error_code === 'camera_unavailable') return result('Camera unavailable', 'Release the camera in OBS / Streamlabs and retry.', false, true);
+  if (t.error_code === 'model_failed') return result('Pose model unavailable', 'Check your network and retry Free capture.', false, true);
+  if (!t.camera_live) return result('Camera off', 'Click Start Camera in the camera window.');
+  if (!t.storage_ok) return result('Saving unavailable', 'Allow local browser storage before capturing reps.', false, true);
+  if (camera.mode === 'capture' && (!t.model_ready || t.actual_mode !== 'capture')) return result('Loading pose model', 'Keep the camera window open. First use may take longer.');
+  if (t.actual_mode !== 'capture') return result('Webcam live', 'Start a queued challenge or choose Free capture.', true);
+  if (!t.model_ready) return result('Loading pose model', 'Waiting for the first pose result.');
+  if (!t.body_detected) return result('Step into frame', 'Move back until your full body is visible.');
+  return result('Capture ready', 'Body detected · ready to count your reps.', true);
+}
+
 export function selectedTriggers(settings, diagnostics) {
   const required = [];
   if (settings.target_reward_id) required.push('Channel Points');

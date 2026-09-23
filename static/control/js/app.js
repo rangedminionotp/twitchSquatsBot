@@ -1,5 +1,6 @@
 import {arrangeConsole} from './render.js';
 import {initStatus} from './features/status.js';
+import {initOnboarding} from './features/onboarding.js';
 import {initChallenge} from './features/challenge.js';
 import {initCamera} from './features/camera.js';
 import {initSetup} from './features/setup.js';
@@ -11,6 +12,7 @@ import {initRewards} from './features/rewards.js';
 import {initLeague} from './features/league.js';
 const context = {settings: {}};
 arrangeConsole();
+initOnboarding(context);
 initStatus();
 initLeague(context);
 initRewards(context);

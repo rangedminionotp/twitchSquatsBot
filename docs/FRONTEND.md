@@ -27,6 +27,18 @@ Subscriptions and donations still add owed only; they do not enqueue challenges.
 
 ## Readiness is not just authentication
 
+First-run accounts see Twitch onboarding instead of the live console. The header
+always exposes Twitch status and account access; overall capture readiness stays
+in the live card. Saved credentials/identity are distinguished from the live
+socket, so connection interruptions retain counters and queue controls with a
+recovery banner. Starting a queued challenge or saving a reward while disconnected
+opens a connection-required dialog. Pausing and local camera checks remain available.
+
+`features/onboarding.js` owns this presentation and delegates authorization to
+the existing Twitch handler. Loading/failed status requests are not treated as a
+new account. Permission help describes the actual conditional read scopes; access
+revocation is done in Twitch settings, not through a nonexistent in-app disconnect.
+
 The top badge combines fresh settings, listener diagnostics, camera telemetry
 and queue state. It never treats a login alone as Ready. Selected event sources
 must be listening; camera capture must have a working model, detected body and
@@ -79,3 +91,29 @@ The backend now lives in the local `squat_capture/` Python package. Run
 `python -m squat_capture` from the project root, or use the launchers in `scripts/`.
 No package installation or new dependency is required. API routing and queue-service
 extraction are still separate future refactors; this move preserves business logic.
+# Desktop console layout
+
+The control page keeps its existing form elements and API handlers. `render.js`
+composes them into an accessible section sidebar and focused workspaces. Live
+control shows challenges and camera controls; Setup, Rewards, Integrations,
+Activity and Settings each show only their related panels. Navigation updates
+the page heading, breadcrumb, document title and selected item, then focuses
+the heading immediately. Hidden panels keep their existing controls and polling.
+Cross-feature repair/settings links reveal the correct workspace before focusing
+their target; they do not change camera modes, start challenges or authorize an
+account just by changing sections.
+
+`layout.css` uses a full sidebar above 1199px, an icon rail at intermediate
+widths, and a single-column workspace with a section selector at 560px and below.
+The onboarding card sits outside the dashboard grid so first-run controls stay
+hidden without hiding the authorization entry point.
+
+The setup strip uses the same settings and listener checks as Quick setup.
+Camera framing and OBS are explicitly **user confirmations**, not inferred
+device health. Completion collapses the strip; Manage setup opens the existing
+checklist. Camera presentation distinguishes closed, off, denied, loading,
+framing and ready states. It never opens a second camera stream in the console.
+The challenge progress bar represents the first queued challenge's done/target,
+not a ratio between overall owed and stream-completed counters.
+
+Additional presentation tests: `node tests/javascript/test_control_workspace.mjs`.

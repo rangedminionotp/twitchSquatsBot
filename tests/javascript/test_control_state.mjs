@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {deriveStatus, selectedTriggers} from '../../static/control/js/state.js';
+import {deriveStatus, selectedTriggers, deriveAccount} from '../../static/control/js/state.js';
 
 function fixture() {
   const values = {
@@ -43,3 +43,27 @@ assert.equal(selectedTriggers({subs_enabled: '1'}, {health: {listeners: []}}).re
 assert.equal(selectedTriggers({streamlabs_enabled: '1'}, {providers: {streamlabs: 'Listening'}}).ready, true);
 assert.equal(selectedTriggers({streamlabs_enabled: '1', bits_enabled: '1'}, {providers: {streamlabs: 'Listening'}}).ready, false);
 console.log(`${cases.length + 4} control-state assertions passed`);
+
+const accountEntry = (settings = {}, twitch = {state: 'disconnected'}) => ({time: 1000, data: {settings, twitch}});
+assert.equal(deriveAccount(undefined).kind, 'loading');
+assert.equal(deriveAccount({error: 'offline'}, null, 1000).kind, 'unavailable');
+assert.equal(deriveAccount(accountEntry(), null, 30000).kind, 'unavailable');
+assert.equal(deriveAccount(accountEntry(), null, 1000).kind, 'new');
+assert.equal(deriveAccount(accountEntry(), null, 1000).action, 'Connect with Twitch');
+assert.equal(deriveAccount(accountEntry({broadcaster_login: 'streamer'}), null, 1000).kind, 'interrupted');
+assert.equal(deriveAccount(accountEntry({twitch_access_token: 'configured'}), null, 1000).action, 'Reconnect Twitch');
+assert.equal(deriveAccount(accountEntry({}, {state: 'authorizing', auth_state: 'pending'}), null, 1000).kind, 'pending');
+const connected = accountEntry({broadcaster_login: 'streamer', target_reward_id: 'a'}, {state: 'connected'});
+const listening = {health: {listeners: [{name: 'Channel Points', state: 'ready'}]}};
+assert.equal(deriveAccount(connected, listening, 1000).label, 'Twitch connected as streamer');
+assert.equal(deriveAccount(connected, null, 1000).action, 'Manage Twitch connection');
+assert.equal(deriveAccount(connected, {health: {listeners: [{name: 'Channel Points', state: 'attention'}]}}, 1000).action, 'Review Twitch permissions');
+assert.equal(deriveAccount(connected, {providers: {streamlabs: 'Disconnected'}}, 1000).kind, 'connected');
+console.log('12 Twitch onboarding state assertions passed');
+assert.equal(deriveAccount(connected, null, 1000).listening, false);
+assert.equal(deriveAccount(connected, listening, 1000).listening, true);
+assert.equal(deriveAccount(connected, {health: {listeners: []}}, 1000).kind, 'review');
+assert.equal(deriveAccount(connected, {health: {listeners: [{name: 'Channel Points', state: 'disabled'}]}}, 1000).listening, false);
+const subAccount = accountEntry({subs_enabled: '1'}, {state: 'connected'});
+assert.equal(deriveAccount(subAccount, listening, 1000).kind, 'review');
+console.log('5 listener-status assertions passed');

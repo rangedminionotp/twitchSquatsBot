@@ -7,13 +7,12 @@ export function initTwitch(ctx) {
       const data = await json('/api/settings');
       ctx.settings = data.settings;
       ctx.applyLeagueSettings(data.settings);
-      const connected = data.twitch.state === 'connected';
       $('twitchProfile').hidden = !data.settings.broadcaster_login;
       $('twitchName').textContent = data.settings.broadcaster_login || '';
       const avatar = data.settings.broadcaster_avatar || '';
       $('twitchAvatar').hidden = !avatar.startsWith('https://');
       if (!$('twitchAvatar').hidden) $('twitchAvatar').src = avatar;
-      $('login').textContent = connected ? 'Reconnect Twitch' : 'Connect with Twitch';
+
       if (data.settings.twitch_access_token) await ctx.loadRewards();
     } catch (error) {
       $('loginHelp').textContent = error.message;
@@ -22,6 +21,9 @@ export function initTwitch(ctx) {
   }
 
   $('login').onclick = async () => {
+    if (ctx.authBusy) return;
+    ctx.authBusy = true;
+    ctx.renderAccount();
     try {
       $('login').disabled = true;
       const data = await json('/api/twitch/login', {method: 'POST'});
@@ -36,7 +38,8 @@ export function initTwitch(ctx) {
       window.open(data.verification_uri, '_blank', 'noopener');
       poll(data.expires_in);
     } catch (error) {
-      $('login').disabled = false;
+      ctx.authBusy = false;
+      ctx.renderAccount();
       $('loginHelp').textContent = error.message;
       $('loginHelp').className = 'status bad';
     }
@@ -49,7 +52,8 @@ export function initTwitch(ctx) {
       if (busy) return;
       if (Date.now() >= deadline) {
         clearInterval(timer);
-        $('login').disabled = false;
+        ctx.authBusy = false;
+        ctx.renderAccount();
         $('loginHelp').textContent = 'Login expired. Please try again.';
         return;
       }
@@ -58,7 +62,8 @@ export function initTwitch(ctx) {
         const data = await json('/api/settings');
         if (['failed', 'success'].includes(data.twitch.auth_state)) {
           clearInterval(timer);
-          $('login').disabled = false;
+          ctx.authBusy = false;
+          ctx.renderAccount();
           const success = data.twitch.auth_state === 'success';
           $('loginHelp').textContent = success ? 'Twitch connected.' : data.twitch.message;
           $('loginHelp').className = 'status ' + (success ? 'good' : 'bad');
