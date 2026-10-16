@@ -1,7 +1,75 @@
 export const $ = id => document.getElementById(id);
 let revealWorkspace = () => {};
-export function jumpTo(element){revealWorkspace(element);for(let parent=element.parentElement;parent;parent=parent.parentElement){if(parent.tagName==='DETAILS')parent.open=true}element.scrollIntoView({behavior:'instant',block:'start'});element.focus({preventScroll:true})}
+export function jumpTo(element, options = {}){revealWorkspace(element, options);for(let parent=element.parentElement;parent;parent=parent.parentElement){if(parent.tagName==='DETAILS')parent.open=true}element.scrollIntoView({behavior:'instant',block:'start'});element.focus({preventScroll:true})}
+// Same-document history: moving between workspaces never reloads editable forms.
+export function createWorkspaceHistory(history, {validPage, snapshot, render}) {
+  const read = state => validPage(state?.squatWorkspace?.page) ? state.squatWorkspace : null;
+  let view = read(history.state) || {page:'live',scrollY:0};
+  function write(value, method) {
+    view=value;
+    history[method]({...history.state,squatWorkspace:value},'');
+  }
+  function save(extra = {}) { write({...view,...snapshot(),...extra},'replaceState'); }
+  if (!read(history.state)) write(view,'replaceState');
+  return {
+    go(page, {fromSettings, focusId} = {}) {
+      if (!validPage(page) || page===view.page) return false;
+      const returning = view.page==='settings' && !!fromSettings;
+      save(returning ? {connectionTarget:fromSettings} : {});
+      write({page,scrollY:0,focusId,returnToSettings:returning},'pushState');
+      render(view,false);
+      return true;
+    },
+    back() { if (view.returnToSettings) { save(); history.back(); } },
+    restore(state) {
+      view=read(state) || {page:'live',scrollY:0};
+      render(view,true);
+    },
+  };
+}
 export function diagnosticRow(parent,title,detail,good=false){const row=document.createElement('div');row.className='status'+(good?' good':'');const head=document.createElement('strong');head.textContent=title;const body=document.createElement('div');body.textContent=detail;row.append(head,body);parent.append(row)}
+export function renderConnectionHealth(parent, health, providers = {}) {
+  const activeRow = document.activeElement?.closest?.('.connection-row');
+  const focusedTarget = activeRow && parent.contains(activeRow) ? activeRow.dataset.target : null;
+  parent.replaceChildren();
+  const targets = {Twitch:'login','Channel Points':'reward','Subs / gifts':'subs_settings',Bits:'bits_settings',Streamlabs:'streamlabs_settings',StreamElements:'streamelements_settings'};
+  const labels = {connected:'Connected',ready:'Listening',disabled:'Disabled',connecting:'Connecting',disconnected:'Disconnected',attention:'Not listening'};
+  function row(name, state, detail = '') {
+    const normalized = String(state || 'unknown').toLowerCase();
+    const good = ['connected','ready','listening'].includes(normalized);
+    const disabled = normalized === 'disabled';
+    const targetId = targets[name];
+    const line = document.createElement(targetId ? 'a' : 'div'); line.className = 'connection-row';
+    if (targetId) {
+      line.href = '#' + targetId;
+      line.dataset.target = targetId;
+      line.title = 'Open ' + name + ' settings';
+      line.onclick = event => {
+        event.preventDefault();
+        const target = $(targetId);
+        if (!target) return;
+        const connection = target.querySelector?.('.support-connection');
+        if (connection) connection.open = true;
+        jumpTo(target, {fromSettings:targetId});
+      };
+    }
+    const title = document.createElement('strong'); title.textContent = name;
+    const badge = document.createElement('span'); badge.className = 'connection-status';
+    badge.dataset.tone = good ? 'good' : disabled ? 'muted' : 'warning';
+    badge.textContent = labels[normalized] || (good ? 'Listening' : 'Check connection');
+    line.append(title, badge);
+    if (!good && !disabled) {
+      const note = document.createElement('p'); note.className = 'hint';
+      note.textContent = detail || String(state || 'Status unavailable'); line.append(note);
+    }
+    parent.append(line);
+    // Polling should not remove keyboard focus from a settings shortcut.
+    if (targetId && targetId === focusedTarget) line.focus({preventScroll:true});
+  }
+  row('Twitch', health.connection.state, health.connection.message);
+  for (const item of health.listeners) row(item.name, item.state, item.message);
+  for (const [name,state] of Object.entries(providers)) row({streamlabs:'Streamlabs',streamelements:'StreamElements'}[name] || name,state,state);
+}
 export function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 export function arrangeConsole(){
 const queueCard=document.createElement('section');queueCard.className='card';queueCard.innerHTML='<h2>Challenge queue</h2><p class="hint">Redeems add to overall owed once. Start manually; subs / tips never join this queue.</p><div id="queueItems"></div><div class="actions"><button class="btn btn-primary" id="queueStart">Start / resume queue</button><button class="btn btn-ghost" id="queuePause">Pause · Webcam</button></div><p id="queueMessage" class="hint" role="status"></p>';
@@ -30,10 +98,16 @@ function compose(){
   const guide=$('setupGuide');guide.classList.add('setup-strip');guide.querySelector('h2').id='setupTitle';
   const guideHint=document.createElement('span');guideHint.className='hint';guideHint.id='setupSummary';guide.querySelector('.chevron').before(guideHint);
   $('setupConnect').textContent='Manage Twitch account';$('setupLater').textContent='Skip setup for now';$('setupFinish').className='btn btn-secondary';
-  const advanced=document.createElement('details');advanced.className='card advanced';advanced.id='advancedSettings';
-  advanced.innerHTML='<summary><h2>Settings &amp; diagnostics</h2><span class="hint">Account · integrations · health</span><span class="chevron" aria-hidden="true"></span></summary><div class="advanced-body"></div>';
+  const advanced=document.createElement('section');advanced.className='advanced settings-workspace';advanced.id='advancedSettings';
+  advanced.setAttribute('aria-label','Settings');
+  advanced.innerHTML='<div class="advanced-body"></div>';
   layout.after(advanced);advanced.querySelector('.advanced-body').append(account,health,league,test);
   account.querySelector('h2').textContent='Twitch account';$('login').className='btn btn-secondary';health.querySelector('.hint').textContent='Login and event listening are checked separately. Reconnect in Twitch account if permissions are missing.';$('healthRows').className='health-list';
+  account.id='twitchAccountCard';
+  test.id='ruleTestCard';test.open=true;
+  health.querySelector('.hint').hidden=true;
+  const healthHeading=health.querySelector('.card-head');healthHeading.append($('healthRefresh'));
+  $('healthRefresh').textContent='Refresh';
   const headerActions=document.createElement('div');headerActions.className='header-actions';document.querySelector('.topbar').append(headerActions);headerActions.append($('connectionPill'));
   const manage=document.createElement('button');manage.className='btn btn-text';manage.textContent='Settings';manage.onclick=()=>jumpTo($('login'));headerActions.append(manage);
   $('connection').textContent='';$('connection').setAttribute('role','status');$('saveReward').className='btn btn-secondary';
@@ -76,7 +150,7 @@ function arrangeWorkspace() {
   const topbar = workspace.querySelector('.topbar');
   topbar.querySelector('.brand').innerHTML = '<span class="breadcrumb">Squat Capture <span aria-hidden="true"> / </span><strong>Live control</strong></span>';
   const heading = document.createElement('div'); heading.className = 'workspace-heading';
-  heading.innerHTML = '<div><p class="eyebrow">YOUR STREAM, YOUR PACE</p><h1>Live control</h1><p class="hint">Run your challenge, camera and stream integrations from one place.</p></div>';
+  heading.innerHTML = '<div><h1>Live control</h1></div>';
   heading.append($('liveActions').querySelector('a'));
   heading.querySelector('a').textContent = 'Open camera window ↗';
   topbar.after(heading);
@@ -137,7 +211,7 @@ function installWorkspaceNavigation({nav, workspace, heading, layout, main, side
   integrations.className = 'integration-page stack';
   integrations.append($('supportCard'), $('riotEnabled').closest('details.card'));
   advanced.before(integrations);
-  advanced.querySelector('.advanced-body').append($('healthCard'));
+  advanced.querySelector('.advanced-body').append($('healthCard'), $('ruleTestCard'));
   const pages = {
     live: ['Live control', 'Your challenge and camera. Everything else is one click away.'],
     setup: ['Setup', 'Check Twitch, triggers, camera framing and your OBS overlay.'],
@@ -161,6 +235,9 @@ function installWorkspaceNavigation({nav, workspace, heading, layout, main, side
     const option = document.createElement('option'); option.value = key; option.textContent = label; mobile.append(option);
   }
   heading.before(mobile);
+  const returnBar=document.createElement('div');returnBar.className='workspace-return';returnBar.hidden=true;
+  const back=document.createElement('button');back.type='button';back.className='btn btn-secondary';
+  back.id='backToSettings';back.textContent='← Back to Settings';returnBar.append(back);heading.before(returnBar);
   let current = 'live';
   function showPage(key, focus = false) {
     if (!pages[key]) return;
@@ -168,7 +245,6 @@ function installWorkspaceNavigation({nav, workspace, heading, layout, main, side
     workspace.dataset.page = key;
     const [label, description] = pages[key];
     title.textContent = label;
-    heading.querySelector('.hint').textContent = description;
     workspace.querySelector('.breadcrumb strong').textContent = label;
     document.title = label + ' · Squat Capture';
     for (const [element, views] of sections) element.hidden = !views.includes(key);
@@ -176,7 +252,6 @@ function installWorkspaceNavigation({nav, workspace, heading, layout, main, side
     side.hidden = ![...side.children].some(element => !element.hidden);
     layout.hidden = main.hidden && side.hidden;
     if (key === 'setup') guide.open = true;
-    if (key === 'settings') advanced.open = true;
     if (key === 'activity') $('recentActivity').open = true;
     if (key === 'integrations') $('supportCard').open = true;
     for (const button of nav.querySelectorAll('.nav-item')) {
@@ -186,23 +261,46 @@ function installWorkspaceNavigation({nav, workspace, heading, layout, main, side
     mobile.value = key;
     if (focus) { title.scrollIntoView({behavior:'instant',block:'start'}); title.focus({preventScroll:true}); }
   }
+  window.history.scrollRestoration='manual';
+  const navigation=createWorkspaceHistory(window.history,{
+    validPage:key=>Object.hasOwn(pages,key),
+    snapshot:()=>({page:current,scrollY:window.scrollY,focusId:document.activeElement?.id,
+      connectionTarget:document.activeElement?.closest?.('.connection-row')?.dataset.target}),
+    render:(view,restore)=>{
+      showPage(view.page);
+      const returning=!!view.returnToSettings && view.page!=='settings';
+      returnBar.hidden=!returning;workspace.dataset.returnSettings=String(returning);
+      if (!restore) return;
+      requestAnimationFrame(()=>{
+        const link=[...$('healthRows').querySelectorAll('.connection-row')].find(row=>row.dataset.target===view.connectionTarget);
+        const target=link || (view.focusId && $(view.focusId)) || title;
+        for(let parent=target.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+        if(returning){const connection=target.querySelector?.('.support-connection');if(connection)connection.open=true;}
+        target.focus({preventScroll:true});
+        window.scrollTo({top:Number.isFinite(view.scrollY)?view.scrollY:0,behavior:'instant'});
+      });
+    }
+  });
+  back.onclick=()=>navigation.back();
+  window.addEventListener('popstate',event=>navigation.restore(event.state));
   function navigate(key) {
     if (document.body.dataset.authView !== 'dashboard' && key !== 'settings') {
       mobile.value = current;
       jumpTo($('login'));
       return;
     }
-    showPage(key, true);
+    navigation.go(key);
+    title.scrollIntoView({behavior:'instant',block:'start'});title.focus({preventScroll:true});
   }
   for (const button of nav.querySelectorAll('.nav-item')) button.onclick = () => navigate(destinations[button.dataset.destination]);
   mobile.onchange = () => navigate(mobile.value);
   nav.querySelector('.sidebar-brand').onclick = event => { event.preventDefault(); navigate('live'); };
-  revealWorkspace = element => {
+  revealWorkspace = (element, options) => {
     for (const [section, views] of sections) {
-      if (section.contains(element) && !views.includes(current)) { showPage(views[0]); break; }
+      if (section.contains(element) && !views.includes(current)) { navigation.go(views[0], {...options,focusId:element.id}); break; }
     }
   };
-  showPage('live');
+  navigation.restore(window.history.state);
 }
 
 export function renderSetupReadiness(steps) {
@@ -210,6 +308,7 @@ export function renderSetupReadiness(steps) {
   $('setupReadiness').dataset.complete = String(count === 4);
   $('readinessTitle').textContent = count === 4 ? 'Setup complete' : 'Setup · '+count+' of 4';
   $('readinessSummary').textContent = count === 4 ? 'Triggers listening · Camera and OBS checks saved' : (4-count)+' checks remaining';
+  $('readinessSummary').hidden = count === 4;
   $('continueSetup').textContent = count === 4 ? 'Manage setup' : 'Continue setup';
   const labels = [['Connected','Connect Twitch'], ['Listening','Choose / check triggers'], ['Framing confirmed','Check framing'], ['Overlay confirmed','Add overlay']];
   steps.forEach((done, i) => {

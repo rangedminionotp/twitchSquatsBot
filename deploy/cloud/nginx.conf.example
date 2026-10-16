@@ -1,0 +1,47 @@
+# Include in nginx's http context (e.g. sites-enabled on Ubuntu).
+# Replace example.invalid and provision a certificate BEFORE enabling.
+limit_req_zone $binary_remote_addr zone=squat_general:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=squat_auth:1m rate=5r/m;
+limit_conn_zone $binary_remote_addr zone=squat_connections:10m;
+
+server {
+    listen 80;
+    server_name example.invalid;
+    access_log off;
+    error_log /dev/null;
+    return 301 https://example.invalid$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name example.invalid;
+    ssl_certificate /etc/letsencrypt/live/example.invalid/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.invalid/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off; # OAuth codes, overlay bearer keys and cookies are private.
+    error_log /dev/null;
+    client_max_body_size 64k;
+    client_header_timeout 10s;
+    client_body_timeout 10s;
+    send_timeout 15s;
+    keepalive_timeout 15s;
+    limit_conn squat_connections 12;
+    limit_req_status 429;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 30s;
+    proxy_send_timeout 15s;
+    proxy_set_header Host example.invalid;
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Proto "";
+
+    location /auth/ {
+        limit_req zone=squat_auth burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8090;
+    }
+    location / {
+        limit_req zone=squat_general burst=30 nodelay;
+        proxy_pass http://127.0.0.1:8090;
+    }
+}

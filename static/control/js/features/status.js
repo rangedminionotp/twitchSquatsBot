@@ -15,7 +15,9 @@ export function initStatus() {
   function render() {
     const status = deriveStatus(snapshots);
     detail.textContent = status.detail;
-    repair.hidden = !status.target;
+    // Camera guidance belongs in the camera card, not above the same counters.
+    detail.hidden = !status.target || status.target === 'cameraSummary';
+    repair.hidden = detail.hidden;
     repair.onclick = () => {
       const target = $(status.target);
       // The camera summary is not an input; make it focusable for keyboard users.

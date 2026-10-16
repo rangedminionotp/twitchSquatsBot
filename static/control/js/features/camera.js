@@ -12,6 +12,8 @@ export function initCamera(ctx) {
       const t = state.telemetry || {};
       const display = cameraPresentation(state);
       $('cameraSummary').textContent = display.detail;
+      // Routine state already appears above; show guidance only when actionable.
+      $('cameraSummary').hidden = !display.error && (!state.page_connected || display.ready);
       $('cameraSummary').dataset.error = String(display.error);
       $('liveState').textContent = (display.ready ? '● ' : '○ ') + display.label;
       $('liveState').dataset.ready = String(display.ready);
@@ -28,6 +30,7 @@ export function initCamera(ctx) {
     } catch (error) {
       $('cameraControlStatus').textContent = error.message;
       $('cameraSummary').textContent = 'Camera status unavailable · check the local app connection.';
+      $('cameraSummary').hidden = false;
       $('cameraSummary').dataset.error = 'true';
       $('liveState').textContent = '○ Camera status unavailable';
       $('liveState').dataset.ready = 'false';

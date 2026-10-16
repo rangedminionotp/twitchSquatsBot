@@ -15,6 +15,7 @@ def render_refresh_page(values):
 
 
 ASSETS = {
+    '/static/capture/squat-detector.mjs': ('capture/squat-detector.mjs', 'text/javascript; charset=utf-8'),
     '/static/control/js/features/onboarding.js': ('control/js/features/onboarding.js', 'text/javascript; charset=utf-8'),
     "/static/capture/capture.css": ("capture/capture.css", "text/css; charset=utf-8"),
     "/static/capture/capture.js": ("capture/capture.js", "text/javascript; charset=utf-8"),

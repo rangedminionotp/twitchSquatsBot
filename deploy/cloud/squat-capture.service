@@ -1,0 +1,30 @@
+[Unit]
+Description=Squat Capture cloud beta (single instance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=squatcapture
+Group=squatcapture
+WorkingDirectory=/opt/squat-capture
+EnvironmentFile=/etc/squat-capture/cloud.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/squat-capture/.venv/bin/python -m squat_capture.cloud
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/squat-capture
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=2048
+TasksMax=128
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

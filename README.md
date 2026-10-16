@@ -24,6 +24,18 @@ provider. Try it privately before relying on it during a stream.
 - Browser-local pending rep recovery and duplicate-report protection.
 - Optional League account checks before starting the queue.
 
+### Experimental cloud development
+
+A separate, unfinished multi-user prototype is being developed alongside the
+local app. It currently covers login, isolated counters, trigger rules, a signed
+event receiver, persistent queues, read-only overlay links and opt-in Twitch
+subscription lifecycle management, plus challenge controls and a replay-safe
+capture protocol with a browser Webcam/Capture page and saved-progress recovery.
+Real-provider/device validation and production hardening are **not complete yet**;
+this is not a public release.
+See [cloud setup and remaining work](docs/CLOUD.md). Do not expose the local
+control server to the Internet as a substitute for the cloud service.
+
 ## 1. Download and start
 
 You need Python 3, internet access for installation/Twitch/pose-model loading,

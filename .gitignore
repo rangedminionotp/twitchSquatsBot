@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .test-data/
+.cloud-data/
 
 # Local environment variables (sanitized templates may be committed).
 .env
@@ -9,6 +10,7 @@ __pycache__/
 !.env.example
 !.env.sample
 !.env.template
+!.env.cloud.example
 
 # Runtime data may contain OAuth tokens, provider credentials and viewer history.
 # Applies even when SQUAT_CAPTURE_DATA_DIR points inside this repository.
