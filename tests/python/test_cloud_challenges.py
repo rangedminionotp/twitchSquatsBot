@@ -23,6 +23,8 @@ class ChallengeTests(unittest.TestCase):
         for uid in ('11','22'):
             self.store.login({'user_id':uid,'login':'test'+uid},{'access_token':'fake'})
             self.store.save_rules(uid,{**self.store.rules(uid),'reward_id':'reward','reward_reps':3,'sub_reps':5})
+        # Existing future debt is independent of the two queued redemptions.
+        self.store.set_owed('11',6)
         for event_id in ('one','two'):
             self.store.receive_event('11','channel.channel_points_custom_reward_redemption.add',event_id,
                 {'id':event_id,'broadcaster_user_id':'11','reward':{'id':'reward'},'user_name':event_id})
@@ -35,6 +37,7 @@ class ChallengeTests(unittest.TestCase):
         return self.service.progress('11',self.run,self.lease,count)
 
     def test_cumulative_progress_duplicates_and_reordering(self):
+        self.assertEqual(self.store.profile('11')['owed'],6)
         self.assertEqual(self.progress(2)['accepted'],2)
         self.assertEqual(self.progress(2)['accepted'],2)
         self.assertEqual(self.progress(1)['accepted'],2)
@@ -53,6 +56,18 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(next_run['viewer'],'two')
         self.assertEqual(self.progress(3)['accepted'],3)
         self.assertEqual(self.store.profile('11')['lifetime'],3)
+        self.assertEqual(self.store.profile('11')['owed'],3)
+
+    def test_challenge_continues_after_debt_is_paid(self):
+        self.store.set_owed('11',1)
+        self.store.observe_stream('11',{'id':'stream-a','user_id':'11','started_at':'2026-10-17T10:00:00Z'})
+        self.assertEqual(self.progress(2)['run']['status'],'active')
+        self.assertEqual(self.store.profile('11')['owed'],0)
+        self.assertEqual(self.progress(3)['run']['status'],'completed')
+        self.assertEqual(self.store.profile('11')['owed'],0)
+        self.assertEqual(self.store.profile('11')['lifetime'],3)
+        self.assertEqual(self.store.stream_summary('11')['completed'],3)
+        self.assertEqual(len(self.store.queue('11')),1)
 
     def test_pause_resume_invalidates_old_lease(self):
         self.progress(1)

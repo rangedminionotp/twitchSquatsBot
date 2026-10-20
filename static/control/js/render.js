@@ -72,7 +72,7 @@ export function renderConnectionHealth(parent, health, providers = {}) {
 }
 export function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 export function arrangeConsole(){
-const queueCard=document.createElement('section');queueCard.className='card';queueCard.innerHTML='<h2>Challenge queue</h2><p class="hint">Redeems add to overall owed once. Start manually; subs / tips never join this queue.</p><div id="queueItems"></div><div class="actions"><button class="btn btn-primary" id="queueStart">Start / resume queue</button><button class="btn btn-ghost" id="queuePause">Pause · Webcam</button></div><p id="queueMessage" class="hint" role="status"></p>';
+const queueCard=document.createElement('section');queueCard.className='card';queueCard.innerHTML='<h2>Challenge queue</h2><div id="queueItems"></div><div class="actions"><button class="btn btn-primary" id="queueStart">Start / resume queue</button><button class="btn btn-ghost" id="queuePause">Pause · Webcam</button></div><p id="queueMessage" class="hint" role="status"></p>';
 // Keep existing controls and event IDs when composing the live console.
 function compose(){
   const layout=document.querySelector('.layout'), left=layout.querySelector('.stack'), side=layout.querySelector('.side');

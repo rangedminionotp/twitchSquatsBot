@@ -22,6 +22,7 @@ export function initCamera(ctx) {
         'Requested: '+state.mode+' · Actual: '+(t.actual_mode || 'unknown'),
         'Camera: '+(t.camera_live ? 'live' : 'not started / unavailable'),
         'Model: '+(t.model_ready ? 'ready' : 'not loaded'),
+        'Calibration: '+(t.calibration || 'unknown'),
         'Body: '+(t.actual_mode === 'capture' ? (t.body_detected ? 'detected' : 'not detected') : 'not checking in Webcam'),
         'Saving: '+(!t.storage_ok ? 'local storage unavailable' : t.pending ? 'waiting to sync '+t.pending+' batch(es)' : 'all reps synced')
       ].join('\n') : 'Camera page disconnected · status unavailable';

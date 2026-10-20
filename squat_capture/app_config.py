@@ -83,7 +83,7 @@ class AppConfig:
 
     def update(self, values):
         with self._lock:
-            values = validate_support_settings(values)
+            values = validate_support_settings(values, self._data)
             for key in DEFAULTS:
                 if key in values and key not in ("twitch_access_token", "twitch_refresh_token"):
                     if key in ("riot_api_key", "streamlabs_token", "streamelements_token") and values[key] == "configured":

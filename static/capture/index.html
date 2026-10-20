@@ -32,6 +32,11 @@
         <h1 class="title">Squat Counter Popup</h1>
       </div>
       <div id="status" class="status">Open this page before stream or let the listener auto-open it when a matching redeem arrives.</div>
+      <div id="calibrationControls" class="calibration-controls">
+        <button id="calibrateButton" type="button" disabled>Calibrate</button>
+        <button id="cancelCalibration" type="button" class="secondary" hidden>Cancel</button>
+        <div><strong id="calibrationLabel">Calibration needed</strong><p id="calibrationHint" role="status">Start your camera, then calibrate. The demo does not count.</p></div>
+      </div>
       <div class="card">
         <strong>Viewer</strong>
         <span id="viewer">Waiting...</span>
@@ -55,25 +60,34 @@
       <div class="form-guide" aria-label="Squat phase guide">
         <div id="standIndicator" class="form-step active">
           <strong>1. STAND</strong>
-          <span>Legs nearly straight: 155°+</span>
+          <span>Your calibrated standing position</span>
         </div>
         <div id="downIndicator" class="form-step">
           <strong>2. DOWN</strong>
-          <span>Knees bent to 120° or lower</span>
+          <span>Your calibrated squat depth</span>
         </div>
       </div>
-      <div class="card">
+      <div id="detectionDetailsCard" class="card detection-details">
         <div class="angle-readout">
-          <strong>Knee Bend</strong>
+          <strong>Calibrated range</strong>
           <span id="angleValue">--°</span>
         </div>
         <div class="depth-track">
           <div id="depthFill" class="depth-fill"></div>
         </div>
         <div class="threshold-labels">
-          <span>Standing 180°</span>
-          <span>Down ≤120°</span>
+          <span>Your standing height</span>
+          <span>Your demonstrated depth</span>
         </div>
+        <dl class="pose-metrics" aria-label="Live squat detection details">
+          <div><dt>Current knee</dt><dd id="metricCurrentAngle">—</dd></div>
+          <div><dt>Standing knee</dt><dd id="metricStandingAngle">—</dd></div>
+          <div><dt>Squat knee</dt><dd id="metricSquatAngle">—</dd></div>
+          <div><dt>Hip drop</dt><dd id="metricHipDrop">—</dd></div>
+          <div><dt>Depth score</dt><dd id="metricDepthScore">—</dd></div>
+          <div><dt>Tracking</dt><dd id="metricTracking">—</dd></div>
+        </dl>
+        <p class="metric-note">Original angle mode: DOWN ≤ 120° · STAND ≥ 155°</p>
       </div>
       <div class="card">
         <strong>Camera Device</strong>

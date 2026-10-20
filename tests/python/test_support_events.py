@@ -40,6 +40,66 @@ class SupportTests(unittest.TestCase):
         SupportService(self.config, reloaded, lambda _: None).add("subs", "same")
         self.assertEqual(reloaded.snapshot()["owed_squats"], 1)
 
+    def test_bits_bundles_preview_events_and_restart(self):
+        self.config.update({'bits_enabled':'1','bits_unit':'100','bits_squats':'1',
+                            'bits_bundle_enabled':'1','bits_bundle_unit':'1000','bits_bundle_squats':'15',
+                            'broadcaster_id':'owner'})
+        self.stats.set_counters(owed=100)
+        original = self.stats.path.read_bytes()
+        for amount, expected in [(0,0),(99,0),(100,1),(499,4),(500,5),(999,9),
+                                 (1000,15),(1099,15),(1200,17),(2000,30),(2500,35)]:
+            with self.subTest(amount=amount):
+                self.assertEqual(self.service.preview('bits',amount)['delta'],expected)
+        self.assertEqual(self.stats.path.read_bytes(),original,'Preview must not write counts')
+        event={'subscription':{'type':'channel.cheer'},'message_id':'one-cheer',
+               'event':{'broadcaster_user_id':'owner','bits':1200}}
+        self.service.twitch(event)
+        self.service.twitch(event)
+        restored=PersistentStats()
+        service=SupportService(AppConfig(),restored,lambda _:None)
+        service.twitch(event)
+        self.assertEqual(restored.snapshot()['owed_squats'],117)
+        self.assertEqual(restored.queue_snapshot()['items'],[])
+        service.add('bits','separate-a',500);service.add('bits','separate-b',500)
+        self.assertEqual(restored.snapshot()['owed_squats'],127,'Separate Cheers do not form a bundle')
+        self.config.update({'bits_bundle_enabled':'0'})
+        self.assertEqual(self.service.preview('bits',1200)['delta'],12,'Disabled bundle keeps legacy rate')
+
+    def test_bits_bundle_settings_are_validated_before_saving(self):
+        self.config.update({'bits_enabled':'1','bits_unit':'100','bits_squats':'1',
+                            'bits_bundle_enabled':'1','bits_bundle_unit':'1000','bits_bundle_squats':'15'})
+        original=self.config.path.read_bytes()
+        for patch_values in ({'bits_bundle_unit':'100'}, {'bits_bundle_unit':'150'},
+                             {'bits_bundle_unit':'1000.5'}, {'bits_bundle_squats':'0'},
+                             {'bits_bundle_squats':'NaN'}, {'bits_bundle_enabled':'true'},
+                             {'bits_unit':'300'}):
+            with self.subTest(values=patch_values), self.assertRaises(ValueError):
+                self.config.update(patch_values)
+            self.assertEqual(self.config.path.read_bytes(),original)
+            self.assertEqual(self.config.get('bits_unit'),'100')
+        for amount in (-1, 1.5, 'Infinity', 'NaN'):
+            with self.assertRaises(ValueError):self.service.preview('bits',amount)
+
+    def test_subscription_only_settings_survive_restart(self):
+        self.config.update({"subs_enabled": "1", "subs_squats": "10", "broadcaster_id": "owner",
+                            "bits_enabled": "1", "streamlabs_enabled": "1", "streamelements_enabled": "1"})
+        self.config.update({"bits_enabled": "0", "streamlabs_enabled": "0", "streamelements_enabled": "0"})
+        self.stats.set_counters(owed=100)
+        restored = PersistentStats()
+        service = SupportService(AppConfig(), restored, lambda _: None)
+        for kind, event in [("channel.subscribe", {"is_gift": False}),
+                            ("channel.subscription.gift", {"total": 2}),
+                            ("channel.cheer", {"bits": 1000})]:
+            service.twitch({"subscription": {"type": kind}, "message_id": kind,
+                            "event": {"broadcaster_user_id": "owner", **event}})
+        for source in ("bits", "streamlabs", "streamelements"):
+            self.assertEqual(service.preview(source, 100, "USD")["delta"], 0)
+            service.add(source, "disabled-event", 100, "USD")
+        self.assertEqual(restored.snapshot()["owed_squats"], 130)
+        restored.enqueue("reward", "Viewer", "10 squats", 10)
+        self.assertEqual(restored.snapshot()["owed_squats"], 130)
+        self.assertEqual(restored.queue_snapshot()["items"][0]["target"], 10)
+
     def test_gifts_are_not_counted_twice(self):
         self.config.update({"subs_enabled": "1", "broadcaster_id": "owner"})
         for kind, event in [("channel.subscribe", {"is_gift": True}),

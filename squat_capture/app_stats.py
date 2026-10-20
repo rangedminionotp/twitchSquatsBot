@@ -82,6 +82,7 @@ class PersistentStats:
                     "run": self._data["queue_runs"][-1] if self._queue_active and self._data["queue_runs"] else None}
 
     def enqueue(self, redemption_id, viewer, title, target):
+        """Queue an immediate challenge without increasing future owed reps."""
         if not redemption_id or not isinstance(target, int) or not 1 <= target <= 1000000:
             raise ValueError("Invalid redemption")
         with self._lock:
@@ -90,8 +91,7 @@ class PersistentStats:
             before = copy.deepcopy(self._data)
             self._data["redemption_ids"][redemption_id] = True
             self._data["redemption_queue"].append({"id": redemption_id, "viewer": viewer, "title": title, "target": target, "done": 0})
-            self._data["owed_squats"] += target
-            self._audit("redemption", target, "Queued; added to owed")
+            self._audit("redemption", target, "Challenge queued; total owed unchanged")
             try:
                 self._save()
             except OSError:

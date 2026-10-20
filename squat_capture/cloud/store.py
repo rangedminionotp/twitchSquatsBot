@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from squat_capture.support_events import bits_squats
 
 SESSION_SECONDS = 12 * 60 * 60
 
@@ -65,6 +66,12 @@ class Store:
                     user_id TEXT PRIMARY KEY REFERENCES users(id), stream_id TEXT,
                     state TEXT NOT NULL, checked REAL NOT NULL);
             ''')
+            # Additive migration: existing tenants retain their single-rate rule.
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(rules)')}
+            if 'bits_bundle_unit' not in columns:
+                db.execute('ALTER TABLE rules ADD COLUMN bits_bundle_unit INTEGER NOT NULL DEFAULT 1000')
+            if 'bits_bundle_reps' not in columns:
+                db.execute('ALTER TABLE rules ADD COLUMN bits_bundle_reps INTEGER NOT NULL DEFAULT 0')
 
     @contextmanager
     def connection(self):
@@ -306,18 +313,22 @@ class Store:
 
     def save_rules(self, uid, values):
         expected = {'reward_id','reward_reps','sub_reps','gift_reps','bits_unit','bits_reps'}
-        if set(values) != expected:
+        bundles = {'bits_bundle_unit','bits_bundle_reps'}
+        if not expected <= set(values) or set(values) - expected - bundles:
             raise ValueError('Unexpected rule fields')
+        # Old clients may omit bundle fields; do not silently erase a saved rule.
+        saved = self.rules(uid)
+        values = {**{key: saved[key] for key in bundles}, **values}
         if not isinstance(values['reward_id'], str) or len(values['reward_id']) > 100:
             raise ValueError('Invalid reward ID')
-        for key in expected - {'reward_id'}:
-            minimum = 1 if key in ('reward_reps','bits_unit') else 0
+        for key in (expected | bundles) - {'reward_id'}:
+            minimum = 1 if key in ('reward_reps','bits_unit','bits_bundle_unit') else 0
             if type(values[key]) is not int or not minimum <= values[key] <= 100000:
                 raise ValueError('Invalid rule value')
-        self.rules(uid)
+        bits_squats(0, values['bits_unit'], values['bits_reps'], values['bits_bundle_unit'], values['bits_bundle_reps'])
         with self.connection() as db:
-            db.execute('UPDATE rules SET reward_id=?,reward_reps=?,sub_reps=?,gift_reps=?,bits_unit=?,bits_reps=? WHERE user_id=?',
-                       tuple(values[k] for k in ('reward_id','reward_reps','sub_reps','gift_reps','bits_unit','bits_reps')) + (uid,))
+            db.execute('UPDATE rules SET reward_id=?,reward_reps=?,sub_reps=?,gift_reps=?,bits_unit=?,bits_reps=?,bits_bundle_unit=?,bits_bundle_reps=? WHERE user_id=?',
+                       tuple(values[k] for k in ('reward_id','reward_reps','sub_reps','gift_reps','bits_unit','bits_reps','bits_bundle_unit','bits_bundle_reps')) + (uid,))
         return self.rules(uid)
 
     def queue(self, uid):
@@ -325,7 +336,7 @@ class Store:
             return [dict(row) for row in db.execute("SELECT seq,viewer,target,done FROM challenges WHERE user_id=? AND done<target AND event_key NOT LIKE 'free:%' ORDER BY seq", (uid,))]
 
     def receive_event(self, uid, kind, message_id, event):
-        """Trusted transport only. Receipt, owed and enqueue commit atomically."""
+        """Commit a receipt with either support debt or a queued challenge."""
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             if not db.execute('SELECT id FROM users WHERE id=?', (uid,)).fetchone():
@@ -345,7 +356,8 @@ class Store:
                     raise ValueError('Missing redemption ID')
                 key = 'redemption:' + event['id']
                 if rule['reward_id'] and event.get('reward', {}).get('id') == rule['reward_id']:
-                    target = amount = rule['reward_reps']
+                    # Channel Points schedule reps, not additional future debt.
+                    target = rule['reward_reps']
             elif kind == 'channel.subscribe':
                 if type(event.get('is_gift')) is not bool:
                     raise ValueError('Missing gift flag')
@@ -356,7 +368,8 @@ class Store:
                 quantity = event.get('total' if kind.endswith('.gift') else 'bits')
                 if type(quantity) is not int or not 1 <= quantity <= 10000000:
                     raise ValueError('Invalid event quantity')
-                amount = quantity * rule['gift_reps'] if kind.endswith('.gift') else quantity // rule['bits_unit'] * rule['bits_reps']
+                amount = quantity * rule['gift_reps'] if kind.endswith('.gift') else bits_squats(
+                    quantity, rule['bits_unit'], rule['bits_reps'], rule['bits_bundle_unit'], rule['bits_bundle_reps'])
             else:
                 raise ValueError('Unsupported event')
             if amount > 1000000000:

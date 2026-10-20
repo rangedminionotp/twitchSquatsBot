@@ -70,8 +70,22 @@ async function initPopupPage() {
     const downIndicatorEl = document.getElementById("downIndicator");
     const angleValueEl = document.getElementById("angleValue");
     const depthFillEl = document.getElementById("depthFill");
+    const metricEls = {
+      currentAngle: document.getElementById('metricCurrentAngle'),
+      standingAngle: document.getElementById('metricStandingAngle'),
+      squatAngle: document.getElementById('metricSquatAngle'),
+      hipDrop: document.getElementById('metricHipDrop'),
+      depthScore: document.getElementById('metricDepthScore'),
+      tracking: document.getElementById('metricTracking'),
+    };
     const cameraSelectEl = document.getElementById("cameraSelect");
     const refreshCamerasButton = document.getElementById("refreshCamerasButton");
+    const calibrateButton = document.getElementById('calibrateButton');
+    const cancelCalibration = document.getElementById('cancelCalibration');
+    const calibrationLabel = document.getElementById('calibrationLabel');
+    const calibrationHint = document.getElementById('calibrationHint');
+    let calibrationBusy = false;
+    let calibrationGeneration = 0;
 
     let poseDetector;
     let poseHasResults = false;
@@ -83,20 +97,14 @@ async function initPopupPage() {
     let currentJob = null;
     let squatCount = 0;
     let squatTargetTotal = defaultSquatTarget;
-    let squatPhase = "idle";
     const squatDetector = new SquatDetector();
+    if(squatDetector.fixedAngleMode) document.getElementById('calibrationControls').hidden=true;
     document.addEventListener('visibilitychange', () => squatDetector.reset());
-    let lastDepth = "up";
-    let cooldownFrames = 0;
-    let downCandidateFrames = 0;
-    let upCandidateFrames = 0;
     const newline = String.fromCharCode(10);
     let poseScriptsLoaded = false;
     let poseFrameInFlight = false;
     let completionReported = false;
     let lastProgressSignature = "";
-    const downAngleThreshold = 120;
-    const upAngleThreshold = 155;
 
     function debugLog(message) {
       const time = new Date().toLocaleTimeString();
@@ -186,11 +194,6 @@ async function initPopupPage() {
       squatDetector.reset();
       squatCount = 0;
       squatTargetTotal = currentJob ? currentJob.squat_target : defaultSquatTarget;
-      squatPhase = "idle";
-      lastDepth = "up";
-      cooldownFrames = 0;
-      downCandidateFrames = 0;
-      upCandidateFrames = 0;
       completionReported = false;
       phaseEl.textContent = "Stand tall with your full body visible.";
       angleValueEl.textContent = "--°";
@@ -235,7 +238,6 @@ async function initPopupPage() {
       bannerEl.textContent = viewerName + " redeemed " + rewardTitle + " +" + addedTarget;
       bannerEl.classList.remove("hidden");
       setStatus("Redeem received. Added " + addedTarget + " squats to the queue.");
-      cooldownFrames = 0;
       if (squatCount < squatTargetTotal) {
         completionReported = false;
       }
@@ -325,18 +327,12 @@ async function initPopupPage() {
       if (document.hidden) { squatDetector.reset(); return; }
       poseHasResults = true;
       if (cameraErrorCode === 'model_failed') cameraErrorCode = '';
-      if (isCameraOverlay && (cameraMode !== 'capture' || Date.now()>=cameraLeaseUntil || !cameraStorageOk)) { squatDetector.reset(); return; }
+      if (isCameraOverlay && ((cameraMode !== 'capture' && !squatDetector.calibrating) || Date.now()>=cameraLeaseUntil || !cameraStorageOk)) { squatDetector.reset(); return; }
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvasContext.clearRect(0, 0, canvas.width, canvas.height);
       if (!results.poseLandmarks || !results.poseLandmarks.length) {
-        squatDetector.reset();
-        depthFillEl.style.width = '0%';
-        standIndicatorEl.classList.remove('active');
-        downIndicatorEl.classList.remove('active');
-        phaseEl.textContent = "No body detected. Step back and keep your full body in frame.";
-        angleValueEl.textContent = "--°";
-        setPoseState("Pose lost", "bad");
+        detectSquatPhase(null);
         return;
       }
 
@@ -395,7 +391,15 @@ async function initPopupPage() {
     }
 
     function stopCameraStream() {
-      squatDetector.reset();
+      calibrationGeneration++;
+      streamStarted=false;
+      squatDetector.clearCalibration();
+      canvasContext.clearRect(0,0,canvas.width,canvas.height);
+      calibrateButton.disabled=true;
+      cancelCalibration.hidden=true;
+      document.body.dataset.calibrating='false';
+      calibrationLabel.textContent='Calibration needed';
+      calibrationHint.textContent='Start your camera, then calibrate. The demo does not count.';
       if (!cameraStream) return;
       cameraStream.getTracks().forEach(function (track) {
         track.stop();
@@ -518,11 +522,13 @@ async function initPopupPage() {
         video.srcObject = cameraStream;
         await video.play();
         streamStarted = true;
+        calibrateButton.disabled=false;
+        calibrateButton.textContent='Calibrate';
         const activeTrack = cameraStream.getVideoTracks()[0];
         setCameraState(activeTrack.label || "Camera live", "");
         await refreshCameraDevices();
         cameraSelectEl.value = (activeTrack.getSettings && activeTrack.getSettings().deviceId) || cameraSelectEl.value;
-        setStatus("Camera started. Waiting for redeems or counting the active one.");
+        setStatus("Camera started. Calibrate your stance before counting.");
         if (!renderLoopStarted) {
           renderLoopStarted = true;
           requestAnimationFrame(renderLoop);
@@ -546,113 +552,70 @@ async function initPopupPage() {
 
     function detectSquatPhase(landmarks) {
       const detection = squatDetector.update(landmarks, video.videoWidth, video.videoHeight, performance.now());
-      if (detection.angle === null) {
-        depthFillEl.style.width = '0%';
-        standIndicatorEl.classList.remove('active');
-        downIndicatorEl.classList.remove('active');
-        phaseEl.textContent = "Move back so at least one full leg and both shoulders are visible.";
-        angleValueEl.textContent = "--°";
-        setPoseState("Pose lost", "bad");
-        return;
-      }
-
-      const kneeAngle = detection.angle;
-      if (detection.phase === 'calibrating') {
-        lastDepth = 'up';
-        depthFillEl.style.width = '0%';
-        standIndicatorEl.classList.remove('active');
-        downIndicatorEl.classList.remove('active');
-        phaseEl.textContent = 'Stand tall and hold briefly before starting a rep.';
-        angleValueEl.textContent = Math.round(kneeAngle) + '°';
-        setPoseState('Stand first', 'warn');
-        return;
-      }
-
-      const downNow = kneeAngle <= downAngleThreshold;
-      const upNow = kneeAngle >= upAngleThreshold;
-      const depthPercent = Math.max(
-        0,
-        Math.min(100, (180 - kneeAngle) / (180 - downAngleThreshold) * 100)
-      );
-      angleValueEl.textContent = Math.round(kneeAngle) + "°";
-      depthFillEl.style.width = depthPercent + "%";
-
-      if (cooldownFrames > 0) cooldownFrames -= 1;
-
-      if (downNow) {
-        downCandidateFrames += 1;
-        upCandidateFrames = 0;
-        standIndicatorEl.classList.remove("active");
-        downIndicatorEl.classList.add("active");
-        if (detection.phase === 'down') {
-          lastDepth = "down";
-          squatPhase = "down";
-          phaseEl.textContent = "Depth reached. Now stand all the way up to count the rep.";
-          setPoseState("DOWN ✓", "");
-        } else {
-          phaseEl.textContent = "Hold that depth for a moment...";
-          setPoseState("Confirming depth", "warn");
-        }
-        return;
-      }
-
-      if (upNow) {
-        upCandidateFrames += 1;
-        downCandidateFrames = 0;
-        standIndicatorEl.classList.add("active");
-        downIndicatorEl.classList.remove("active");
-        if (detection.phase === 'up') {
-          if (detection.rep) {
-            squatCount += 1;
-            if (isCameraOverlay) {
-              countEl.textContent = String(squatCount);
-              const segment=queueTicket||'free';
-              const total=(cameraCounts.get(segment)||0)+1;cameraCounts.set(segment,total);
-              const payload={capture_session_id:captureSessionId+':'+segment,count:total,queue_run:queueTicket};
-              cameraPending.set(payload.capture_session_id,payload);persistCamera(payload);
-              flushCameraCounts().catch(e=>showError(e.message));
-              lastDepth = 'up'; squatPhase = 'up'; cooldownFrames = 12;
-              return;
-            }
-            cooldownFrames = 12;
-            const target = squatTargetTotal;
-            if (squatCount >= target) {
-              phaseEl.textContent = "Completed " + target + " squats. Nice work.";
-              setStatus("Target reached.");
-              bannerEl.textContent = "Queue finished at " + target + " squats";
-              updateCountUi("complete", true);
-              reportSquatComplete(target);
-            } else {
-              phaseEl.textContent = "Rep " + squatCount + " counted. Go down again for the next rep.";
-              updateCountUi("active", true);
-            }
-          }
-          lastDepth = "up";
-          squatPhase = "up";
-          setPoseState("STAND ✓", "");
-        } else {
-          phaseEl.textContent = lastDepth === "down"
-            ? "Stand tall and hold briefly to finish the rep..."
-            : "Hold your standing position for calibration...";
-          setPoseState("Confirming stand", "warn");
-        }
-        return;
-      }
-
-      downCandidateFrames = 0;
-      upCandidateFrames = 0;
-      squatPhase = "transition";
-      standIndicatorEl.classList.remove("active");
-      downIndicatorEl.classList.remove("active");
-      phaseEl.textContent = lastDepth === "down"
-        ? "Stand " + Math.max(0, Math.ceil(upAngleThreshold - kneeAngle)) + "° taller to finish the rep."
-        : "Go about " + Math.max(0, Math.ceil(kneeAngle - downAngleThreshold)) + "° lower to reach depth.";
-      setPoseState("MIDPOINT", "warn");
+      const metrics=detection.metrics || {};
+      const degrees=value=>Number.isFinite(value) ? Math.round(value)+'°' : '—';
+      const percent=value=>Number.isFinite(value) ? Math.round(value*100)+'%' : '—';
+      metricEls.currentAngle.textContent=degrees(detection.angle);
+      metricEls.standingAngle.textContent=degrees(metrics.standingAngle);
+      metricEls.squatAngle.textContent=degrees(metrics.squatAngle);
+      metricEls.hipDrop.textContent=percent(metrics.hipDrop);
+      metricEls.depthScore.textContent=percent(metrics.score);
+      metricEls.tracking.textContent=metrics.side ? metrics.side+' leg · '+(metrics.signal==='angle'?'fixed angle':metrics.signal==='hip'?'hip':metrics.signal==='blend'?'angle + hip':'calibrating') : '—';
+      document.body.dataset.calibrating=String(squatDetector.calibrating);
+      cancelCalibration.hidden=!squatDetector.calibrating;
+      calibrationLabel.textContent=detection.label;
+      calibrationHint.textContent=detection.message;
+      calibrateButton.textContent=squatDetector.calibrating ? 'Restart calibration' : squatDetector.calibrated ? 'Recalibrate' : 'Calibrate';
+      phaseEl.textContent=detection.message;
+      angleValueEl.textContent=detection.angle===null ? '—' : Math.round(detection.angle)+'°';
+      depthFillEl.style.width=Math.round(detection.progress*100)+'%';
+      standIndicatorEl.classList.toggle('active',detection.calibrated && detection.phase==='up');
+      downIndicatorEl.classList.toggle('active',detection.calibrated && detection.phase==='down');
+      setPoseState(detection.label,detection.angle===null || !detection.calibrated ? 'warn' : '');
+      // Calibration and Webcam previews must never touch real counters/outboxes.
+      if (!detection.rep || (isCameraOverlay && cameraMode!=='capture')) return;
+      squatCount += 1;
+      if (isCameraOverlay) {
+        countEl.textContent=String(squatCount);
+        const segment=queueTicket||'free';
+        const total=(cameraCounts.get(segment)||0)+1;cameraCounts.set(segment,total);
+        const payload={capture_session_id:captureSessionId+':'+segment,count:total,queue_run:queueTicket};
+        cameraPending.set(payload.capture_session_id,payload);persistCamera(payload);
+        flushCameraCounts().catch(e=>showError(e.message));
+      } else if (squatCount>=squatTargetTotal) {
+        setStatus('Target reached.');
+        bannerEl.textContent='Queue finished at '+squatTargetTotal+' squats';
+        updateCountUi('complete',true);reportSquatComplete(squatTargetTotal);
+      } else updateCountUi('active',true);
     }
+
+    calibrateButton.onclick=async()=>{
+      if(calibrationBusy || !streamStarted)return;
+      const generation=++calibrationGeneration;
+      calibrationBusy=true;calibrateButton.disabled=true;
+      try {
+        calibrationLabel.textContent='Loading pose model…';
+        await ensurePoseLandmarker();
+        if(generation!==calibrationGeneration || !streamStarted)return;
+        squatDetector.startCalibration();
+        cancelCalibration.hidden=false;
+        document.body.dataset.calibrating='true';
+        calibrationLabel.textContent='1 / 3 · Stand';
+        calibrationHint.textContent='Stand naturally with your feet still. Calibration does not count.';
+      }catch(error){calibrationLabel.textContent='Model unavailable';calibrationHint.textContent='Check your connection, then retry Calibrate.';}
+      finally{calibrationBusy=false;calibrateButton.disabled=!streamStarted;}
+    };
+    cancelCalibration.onclick=()=>{
+      calibrationGeneration++;squatDetector.clearCalibration();
+      document.body.dataset.calibrating='false';cancelCalibration.hidden=true;
+      calibrationLabel.textContent='Calibration needed';calibrationHint.textContent='Calibration canceled. No demo reps were counted.';
+      calibrateButton.textContent='Calibrate';
+      canvasContext.clearRect(0,0,canvas.width,canvas.height);
+    };
 
     async function renderLoop() {
       if(isCameraOverlay&&!streamStarted){requestAnimationFrame(renderLoop);return;}
-      if (isCameraOverlay && (cameraMode !== 'capture' || !poseDetector)) { requestAnimationFrame(renderLoop); return; }
+      if (isCameraOverlay && ((cameraMode !== 'capture' && !squatDetector.calibrating) || !poseDetector)) { requestAnimationFrame(renderLoop); return; }
       if (!streamStarted || !poseDetector) return;
       if (video.currentTime !== lastVideoTime && !poseFrameInFlight) {
         poseFrameInFlight = true;
@@ -736,7 +699,9 @@ async function initPopupPage() {
       const tools=document.createElement('div');tools.id='cameraTools';
       const help=document.createElement('p');help.textContent='Release your camera in Streamlabs first. Start here, then window-capture this page. H toggles controls; keep this window open, not minimized.';
       const hide=document.createElement('button');hide.textContent='Hide controls (H)';hide.onclick=()=>document.body.classList.add('clean');
-      tools.append(help,startButton,cameraSelectEl,refreshCamerasButton,hide);document.body.append(tools);
+      tools.append(help,startButton,cameraSelectEl,refreshCamerasButton,hide,
+        document.getElementById('calibrationControls'),document.getElementById('detectionDetailsCard'));
+      document.body.append(tools);
       const warning=document.createElement('div');warning.id='cameraWarning';document.body.append(warning);
       const syncInfo=document.createElement('p');syncInfo.setAttribute('role','status');tools.append(syncInfo);
       recoverCamera();
@@ -746,7 +711,7 @@ async function initPopupPage() {
         if(cameraModeBusy)return;cameraModeBusy=true;
         try{
           syncInfo.textContent=cameraPending.size?'Waiting to sync · '+cameraPending.size+' saved batches':'All reps synced';
-          const response=await fetch('/api/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({heartbeat:true,page_id:cameraPageId,telemetry:{error_code:cameraErrorCode,camera_live:!!cameraStream?.getVideoTracks().some(t=>t.readyState==='live'&&!t.muted),model_ready:poseHasResults,body_detected:Date.now()-lastBodySeen<2000,storage_ok:cameraStorageOk,actual_mode:cameraMode,pending:cameraPending.size}}),signal:AbortSignal.timeout(4000)});
+          const response=await fetch('/api/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({heartbeat:true,page_id:cameraPageId,telemetry:{error_code:cameraErrorCode,camera_live:!!cameraStream?.getVideoTracks().some(t=>t.readyState==='live'&&!t.muted),model_ready:poseHasResults,body_detected:Date.now()-lastBodySeen<2000,storage_ok:cameraStorageOk,actual_mode:cameraMode,calibration:squatDetector.stage,pending:cameraPending.size}}),signal:AbortSignal.timeout(4000)});
           if(!response.ok)throw Error('Control connection unavailable');
           const state=await response.json();
           if(!state.owns_camera){cameraLeaseUntil=0;stopCameraStream();streamStarted=false;throw Error('Another camera page owns capture. Close it and wait 8 seconds, then Start Camera here.');}
@@ -754,11 +719,11 @@ async function initPopupPage() {
           if(!cameraStorageOk&&cameraPending.size===0)throw Error('Local storage unavailable; capture disabled');
           await flushCameraCounts();
           const newTicket=state.queue?.run||null;
-          if(newTicket!==queueTicket){squatDetector.reset();lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;queueTicket=newTicket;}
+          if(newTicket!==queueTicket){squatDetector.reset();queueTicket=newTicket;}
           if(state.mode!==cameraMode){
             // Disable counting while the model loads or a mode change is pending.
             cameraMode='webcam';document.body.dataset.cameraMode='webcam';
-            squatDetector.reset();lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;cooldownFrames=0;
+            squatDetector.reset();
             if(state.mode==='capture')await ensurePoseLandmarker();
             cameraMode=state.mode;document.body.dataset.cameraMode=cameraMode;
             bannerEl.textContent='Squat capture';targetEl.textContent='reps this window';
@@ -767,7 +732,7 @@ async function initPopupPage() {
           if(queueTicket&&head){bannerEl.textContent=head.viewer+' · '+head.title;targetEl.textContent=head.done+' / '+head.target+' · queued challenge';}
           else{bannerEl.textContent='Free capture';targetEl.textContent='reps this window';}
           warning.textContent=errorBoxEl ? errorBoxEl.textContent : '';
-        }catch(e){cameraLeaseUntil=0;cameraMode='webcam';lastDepth='up';downCandidateFrames=0;upCandidateFrames=0;document.body.dataset.cameraMode='webcam';warning.textContent='Capture paused: '+e.message}
+        }catch(e){cameraLeaseUntil=0;cameraMode='webcam';squatDetector.reset();document.body.dataset.cameraMode='webcam';document.body.dataset.calibrating='false';warning.textContent='Capture paused: '+e.message}
         finally{cameraModeBusy=false}
       }
       cameraHeartbeat();setInterval(cameraHeartbeat,1500);
@@ -781,7 +746,7 @@ async function initPopupPage() {
     initPopupPage().catch(function (error) {
       const errorBoxEl = document.getElementById("errorBox");
       const debugBoxEl = document.getElementById("debugBox");
-      const message = "Bootstrap failure:" + newline + (error && error.message ? error.message : error);
+      const message = "Bootstrap failure:\n" + (error && error.message ? error.message : error);
       if (errorBoxEl) {
         errorBoxEl.textContent = message;
         errorBoxEl.classList.add("visible");

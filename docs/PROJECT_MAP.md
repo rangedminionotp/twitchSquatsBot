@@ -29,8 +29,10 @@ a relocation, not a simultaneous business-logic rewrite.
 ## Runtime flow
 
 Twitch events enter through EventSub WebSocket (or the optional legacy webhook).
-Selected redemptions add owed and queue challenges; subs and donations add owed
-without joining the challenge queue. Browser pose detection reports reps to the
+Selected redemptions queue immediate challenges without adding owed; subs, Bits
+and donations add future owed without joining the challenge queue. Completing
+either a challenge or free capture rep pays down owed once (minimum zero).
+Browser pose detection reports reps to the
 local API. Persistent stats and queue state feed the control panel and OBS overlay.
 
 Camera frames are processed in the browser. Static route configuration contains

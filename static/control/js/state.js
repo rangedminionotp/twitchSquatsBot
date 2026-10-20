@@ -47,8 +47,10 @@ export function cameraPresentation(camera) {
   if (!t.camera_live) return result('Camera off', 'Click Start Camera in the camera window.');
   if (!t.storage_ok) return result('Saving unavailable', 'Allow local browser storage before capturing reps.', false, true);
   if (camera.mode === 'capture' && (!t.model_ready || t.actual_mode !== 'capture')) return result('Loading pose model', 'Keep the camera window open. First use may take longer.');
+  if (['standing','lowering','returning'].includes(t.calibration)) return result('Calibrating', 'Follow the three steps in the camera window. Counting is paused.');
   if (t.actual_mode !== 'capture') return result('Webcam live', 'Start a queued challenge or choose Free capture.', true);
   if (!t.model_ready) return result('Loading pose model', 'Waiting for the first pose result.');
+  if (t.calibration==='required') return result('Calibration needed', 'Click Calibrate in the camera window. The demo does not count.');
   if (!t.body_detected) return result('Step into frame', 'Move back until your full body is visible.');
   return result('Capture ready', 'Body detected · ready to count your reps.', true);
 }
@@ -93,8 +95,10 @@ export function deriveStatus(entries, now = Date.now()) {
   if (!t.storage_ok) return result('Saving unavailable', 'Allow local browser storage before capturing reps.', 'cameraSummary');
   if (t.pending > 0) return result('Syncing reps', 'Keep the camera window open until saved reps finish syncing.', 'cameraSummary');
   if (camera.mode === 'capture' && (!t.model_ready || t.actual_mode !== 'capture')) return result('Loading pose model', 'Keep the camera window open. First use may take longer.', 'cameraSummary');
+  if (['standing','lowering','returning'].includes(t.calibration)) return result('Calibrating', 'Follow the camera guide. The calibration demo does not count.', 'cameraSummary');
   if (t.actual_mode !== 'capture') return result(queue.items.length ? 'Queue paused' : 'Webcam mode', 'Triggers listening · camera live. Start a challenge or choose Free capture.', null);
   if (!t.model_ready) return result('Loading pose model', 'Waiting for the first pose result.', 'cameraSummary');
+  if (t.calibration==='required') return result('Calibration needed', 'Click Calibrate in the camera window before counting.', 'cameraSummary');
   if (!t.body_detected) return result('Step into frame', 'Pose model loaded. Move back until your full body is visible.', 'cameraSummary');
   if (queue.items.length && !queue.active) return result('Queue paused', 'Capture is ready. Resume the queued challenge manually.', null);
   return result(queue.active ? 'Challenge running' : 'Ready', 'Triggers listening · camera ready · pose model loaded', null, true);

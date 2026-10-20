@@ -10,6 +10,7 @@ SUPPORT_DEFAULTS = {}
 for source in SOURCES:
     SUPPORT_DEFAULTS.update({source + "_enabled": "0", source + "_squats": "1"})
 SUPPORT_DEFAULTS.update({"bits_unit": "100", "streamlabs_unit": "1",
+    "bits_bundle_enabled": "0", "bits_bundle_unit": "1000", "bits_bundle_squats": "15",
     "streamelements_unit": "1", "streamlabs_currency": "USD",
     "streamelements_currency": "USD", "streamlabs_token": "",
     "streamelements_token": "", "streamelements_channel": ""})
@@ -22,7 +23,23 @@ def number(value):
     return result
 
 
-def validate_support_settings(values):
+def bits_squats(amount, unit, squats, bundle_unit=1000, bundle_squats=0):
+    """Per-event bundles first, then base units; never carry remainders forward."""
+    fields = [number(value) for value in (amount, unit, squats, bundle_unit, bundle_squats)]
+    if any(value != value.to_integral_value() for value in fields):
+        raise ValueError("Bits rules require whole numbers")
+    amount, unit, squats, bundle_unit, bundle_squats = map(int, fields)
+    if unit < 1 or bundle_unit < 1:
+        raise ValueError("Bits units must be positive")
+    if bundle_squats and (bundle_unit <= unit or bundle_unit % unit):
+        raise ValueError("Bits bundle must be a larger multiple of the base unit")
+    if not squats:  # Cloud uses zero base reps to disable Bits entirely.
+        return 0
+    bundles, remainder = divmod(amount, bundle_unit) if bundle_squats else (0, amount)
+    return bundles * bundle_squats + (remainder // unit) * squats
+
+
+def validate_support_settings(values, current=None):
     if not isinstance(values, dict):
         raise ValueError("Settings must be an object")
     values = dict(values)
@@ -33,7 +50,7 @@ def validate_support_settings(values):
         if key.endswith(("_unit", "_squats")):
             try:
                 n = number(value)
-                if n < Decimal("0.01") or (key.endswith("_squats") or key == "bits_unit") and n != n.to_integral_value():
+                if n < Decimal("0.01") or (key.endswith("_squats") or key.startswith("bits_")) and n != n.to_integral_value():
                     raise ValueError()
             except (ValueError, InvalidOperation):
                 raise ValueError(key + ": use a positive number (whole squats / Bits)") from None
@@ -42,6 +59,10 @@ def validate_support_settings(values):
             if len(value) != 3 or not value.isascii() or not value.isalpha():
                 raise ValueError("Currency must be a three-letter code, e.g. USD")
         values[key] = value
+    merged = {**SUPPORT_DEFAULTS, **(current or {}), **values}
+    if merged['bits_bundle_enabled'] == '1':
+        bits_squats(0, merged['bits_unit'], merged['bits_squats'],
+                    merged['bits_bundle_unit'], merged['bits_bundle_squats'])
     return values
 
 
@@ -66,6 +87,10 @@ class SupportService:
                 raise ValueError()
             unit = number(self.config.get(source + "_unit", "1"))
             delta = int(amount // unit) * int(number(self.config.get(source + "_squats")))
+            if source == 'bits':
+                delta = bits_squats(amount, unit, self.config.get('bits_squats'),
+                    self.config.get('bits_bundle_unit', '1000'),
+                    self.config.get('bits_bundle_squats', '15') if self.config.get('bits_bundle_enabled') == '1' else 0)
         except (ValueError, InvalidOperation, ZeroDivisionError):
             raise ValueError("Invalid amount or saved rule") from None
         return {"delta": delta, "reason": "Would add to owed" if delta else "Below one configured unit"}

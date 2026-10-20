@@ -184,6 +184,16 @@
       color: var(--muted);
       font-size: 11px;
     }
+    .pose-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 14px 0 0;
+    }
+    .pose-metrics div { padding: 9px; border-radius: 10px; background: rgba(255,255,255,.055); }
+    .pose-metrics dt { color: var(--muted); font-size: 11px; }
+    .pose-metrics dd { margin: 4px 0 0; font-size: 15px; font-weight: 750; }
+    .metric-note { margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
     .pill-row {
       display: flex;
       flex-wrap: wrap;
@@ -225,6 +235,13 @@
       background: rgba(255, 255, 255, 0.08);
       color: var(--text);
     }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .calibration-controls { display:flex; align-items:center; gap:14px; padding:12px 0; }
+    .calibration-controls>div { min-width:0; }
+    .calibration-controls strong { font-size:14px; }
+    .calibration-controls p { margin:5px 0 0; font-size:13px; line-height:1.5; color:var(--muted); }
+    .calibration-controls button { flex:0 0 auto; }
     .camera-picker {
       display: flex;
       gap: 10px;

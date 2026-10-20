@@ -2,10 +2,12 @@
 import hashlib
 import hmac
 import json
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 try:
@@ -53,11 +55,14 @@ class CloudEventTests(unittest.TestCase):
 
     def test_redemptions_persist_and_dedup_across_message_ids(self):
         kind = 'channel.channel_points_custom_reward_redemption.add'
+        self.store.set_owed('11',12)
         self.assertEqual(self.deliver(kind,self.redemption())[0],204)
         self.assertEqual(self.deliver(kind,self.redemption(),mid='different')[0],204)
         restored = Store(self.store.path,self.key)
-        self.assertEqual(restored.profile('11')['owed'],10)
+        self.assertEqual(restored.profile('11')['owed'],12)
+        self.assertEqual(restored.profile('11')['lifetime'],0)
         self.assertEqual(len(restored.queue('11')),1)
+        self.assertEqual(restored.queue('11')[0]['target'],10)
         self.assertEqual(restored.queue('22'),[])
         self.assertEqual(restored.profile('22')['owed'],0)
 
@@ -65,7 +70,17 @@ class CloudEventTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=5) as pool:
             results = list(pool.map(lambda _: self.store.receive_event('11','channel.channel_points_custom_reward_redemption.add','m',self.redemption()),range(10)))
         self.assertEqual(sum(results),1)
-        self.assertEqual(self.store.profile('11')['owed'],10)
+        self.assertEqual(self.store.profile('11')['owed'],0)
+        self.assertEqual(len(self.store.queue('11')),1)
+
+    def test_redemption_can_queue_at_owed_limit(self):
+        self.store.set_owed('11',1000000000)
+        self.assertEqual(self.deliver('channel.channel_points_custom_reward_redemption.add',self.redemption())[0],204)
+        self.assertEqual(self.store.profile('11')['owed'],1000000000)
+        self.assertEqual(self.store.queue('11')[0]['target'],10)
+        with self.store.connection() as db:
+            receipt=db.execute('SELECT amount FROM event_receipts WHERE user_id=?',('11',)).fetchone()
+        self.assertEqual(receipt['amount'],0)
 
     def test_support_adds_owed_without_queue_and_gifts_not_doubled(self):
         self.deliver('channel.subscribe',{'broadcaster_user_id':'11','is_gift':False},mid='sub')
@@ -75,6 +90,39 @@ class CloudEventTests(unittest.TestCase):
         self.deliver('channel.cheer',{'broadcaster_user_id':'11','bits':250},mid='bits')
         self.assertEqual(self.store.profile('11')['owed'],30)
         self.assertEqual(self.store.queue('11'),[])
+
+    def test_bits_bundles_are_per_event_and_deduplicated(self):
+        self.store.save_rules('11',{**self.rules,'bits_reps':1,'bits_bundle_unit':1000,'bits_bundle_reps':15})
+        total=0
+        for amount, expected in [(99,0),(100,1),(500,5),(999,9),(1000,15),(1200,17),(2000,30)]:
+            event={'broadcaster_user_id':'11','bits':amount}
+            for _ in range(2):self.assertEqual(self.deliver('channel.cheer',event,mid=str(amount))[0],204)
+            total+=expected
+            self.assertEqual(self.store.profile('11')['owed'],total)
+        self.assertEqual(self.store.queue('11'),[])
+        self.assertEqual(self.store.profile('22')['owed'],0)
+        restored=Store(self.store.path,self.key)
+        self.assertEqual(restored.rules('11')['bits_bundle_reps'],15)
+        # An older client still sending six rule fields must not erase the bundle.
+        restored.save_rules('11',{**self.rules,'bits_reps':1})
+        self.assertEqual(restored.rules('11')['bits_bundle_reps'],15)
+        for patch_values in ({'bits_bundle_unit':100},{'bits_bundle_unit':150},
+                             {'bits_bundle_reps':-1},{'bits_bundle_unit':True}):
+            with self.assertRaises(ValueError):restored.save_rules('11',{**restored.rules('11'),**patch_values})
+        restored.save_rules('11',{**restored.rules('11'),'bits_reps':0})
+        restored.receive_event('11','channel.cheer','disabled',{'broadcaster_user_id':'11','bits':1000})
+        self.assertEqual(restored.profile('11')['owed'],total,'Base 0 disables all Bits, including bundles')
+
+    def test_legacy_bits_rules_migrate_without_changing_the_rate(self):
+        path=Path(self.tmp.name)/'legacy.sqlite3'
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute("CREATE TABLE rules(user_id TEXT PRIMARY KEY,reward_id TEXT DEFAULT '',reward_reps INTEGER DEFAULT 10,sub_reps INTEGER DEFAULT 0,gift_reps INTEGER DEFAULT 0,bits_unit INTEGER DEFAULT 100,bits_reps INTEGER DEFAULT 0)")
+            db.execute("INSERT INTO rules(user_id,bits_reps) VALUES('11',2)")
+        migrated=Store(path,self.key)
+        rule=migrated.rules('11')
+        self.assertEqual(rule['bits_reps'],2)
+        self.assertEqual(rule['bits_bundle_reps'],0)
+        self.assertEqual(rule['bits_bundle_unit'],1000)
 
     def test_invalid_signatures_stale_and_future_rejected(self):
         headers,raw = self.signed('channel.subscribe',{'broadcaster_user_id':'11','is_gift':False})

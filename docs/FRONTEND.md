@@ -24,6 +24,29 @@ Feature initializers receive a small context for cross-feature operations
 (camera mode changes, reward refresh and initial League settings). Feature-local
 form state stays in its module; readiness uses API snapshots, not DOM text.
 Subscriptions and donations still add owed only; they do not enqueue challenges.
+Channel Points only enqueue challenges, without adding owed. Completed reps in
+either capture mode reduce owed and increment completion totals.
+
+## Local camera calibration
+
+`static/capture/squat-detector.mjs` is a pure landmark state machine shared by the
+local popup and Camera Overlay. `capture.js` drives the model, feedback and the
+unchanged cumulative count/outbox protocol. Calibration never emits a rep.
+
+Calibrate captures a stable standing reference (1.4 s), a demonstrated depth
+(0.45 s stable), and a return to standing. Angles are computed in pixel-scaled 2D
+coordinates; ankle-relative hip height supplements angle, or becomes the main
+signal when the demonstrated frontal-view angle excursion is too small. Motion
+needs to reach 75% of the demonstrated range and return within 20%, with hysteresis
+and a brief time-based confirmation. These are engineering thresholds, not a
+clinical validation of squat form. Small/noisy demos are rejected.
+
+One visible shoulder and a consistently selected full leg suffice (visibility
+at least 0.5). Missing frames get 300 ms grace without credit toward hold time;
+frame gaps above 900 ms or explicit pauses disarm the current rep. Completed
+calibration survives those resets, but not camera changes/reloads, large foot
+displacements lasting 0.5 s or resolution changes. No calibration/video is uploaded or saved.
+The separate cloud camera has not yet migrated to this detector.
 
 ## Readiness is not just authentication
 

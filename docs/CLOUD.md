@@ -31,7 +31,8 @@ Do not expose the local app's port 8080 through a public tunnel.
 - Personal manual owed counter and read-only, revocable OBS overlay link.
 - No default request-URL logs, referrers or response caching that disclose links.
 - Per-account reward/sub/gift/Bits rules, strict validation and authenticated editing.
-- Durable FIFO redemption queue; support events only add owed, never queue.
+- Durable FIFO redemption queue: Channel Points never add owed; support events
+  only add owed, never queue. Completed challenge reps also pay down future owed.
 - Transactional receipts, counter increments and enqueue; concurrent duplicate
   delivery is counted once. Redemption IDs are also deduplicated across message IDs.
 - Optional `/eventsub` receiver with HMAC/raw-body verification, message-age checks,

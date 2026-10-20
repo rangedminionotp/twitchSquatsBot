@@ -44,6 +44,12 @@ class CameraTests(unittest.TestCase):
             status = camera.update({'heartbeat': True, 'page_id': 'a', 'telemetry': {'error_code': code}})
             self.assertEqual(status['telemetry']['error_code'], '' if code == 'private detail' else code)
 
+    def test_calibration_stage_is_bounded(self):
+        camera = CameraControl()
+        for stage in ('required','standing','lowering','returning','ready','private detail'):
+            status=camera.update({'heartbeat':True,'page_id':'a','telemetry':{'calibration':stage}})
+            self.assertEqual(status['telemetry']['calibration'],'unknown' if stage=='private detail' else stage)
+
 
 if __name__ == '__main__':
     unittest.main()

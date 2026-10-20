@@ -21,6 +21,13 @@ for (const [patch,label] of [
 }
 assert.equal(cameraPresentation({...camera,mode:'webcam',telemetry:{...camera.telemetry,actual_mode:'webcam'}}).label,'Webcam live');
 assert.equal(cameraPresentation({...camera,telemetry:{...camera.telemetry,actual_mode:'webcam'}}).label,'Loading pose model');
+for(const stage of ['required','standing','lowering','returning']) {
+  const result=cameraPresentation({...camera,telemetry:{...camera.telemetry,calibration:stage}});
+  assert.equal(result.ready,false);
+  assert.equal(result.label,stage==='required'?'Calibration needed':'Calibrating');
+}
+assert.equal(cameraPresentation({...camera,telemetry:{...camera.telemetry,calibration:'ready'}}).ready,true);
+assert.equal(cameraPresentation({...camera,mode:'webcam',telemetry:{...camera.telemetry,actual_mode:'webcam',calibration:'standing'}}).label,'Calibrating');
 
 // A minimal DOM for the presentation-only setup renderer. No API or account data.
 const nodes = new Map();

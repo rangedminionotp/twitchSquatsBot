@@ -36,6 +36,8 @@ class CameraControl:
                 data = payload.get('telemetry', {})
                 self.telemetry = {key: data.get(key) is True for key in ('camera_live', 'model_ready', 'body_detected', 'storage_ok')}
                 self.telemetry['actual_mode'] = 'capture' if data.get('actual_mode') == 'capture' else 'webcam'
+                calibration = data.get('calibration')
+                self.telemetry['calibration'] = calibration if calibration in ('required', 'standing', 'lowering', 'returning', 'ready') else 'unknown'
                 code = data.get('error_code')
                 self.telemetry['error_code'] = code if code in ('permission_denied', 'camera_unavailable', 'model_failed') else ''
                 self.telemetry['pending'] = max(0, min(100000, int(data.get('pending', 0))))

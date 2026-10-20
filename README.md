@@ -147,9 +147,21 @@ In the control panel:
 - **Capture squats**: free exercise; counts reps but does **not** start a paused queue.
 - **Start / resume queue**: switches to Capture and works through queued challenges.
 
-Keep both shoulders and at least one complete leg visible. Try a side or slight
-angle. Current knee-angle thresholds are fixed, not personalized calibration.
-Pose recognition is approximate; check a few reps manually before going live.
+Keep at least one shoulder and one complete leg visible. Try a side or slight
+angle. Click **Calibrate** in the local camera window before counting:
+stand naturally and still for about 1.5 seconds, demonstrate one comfortable squat
+and hold its depth briefly, then stand back up. The demo does **not** change counters.
+The detector learns your projected standing angle and hip-height range, so it does
+not require everyone to cross the same 155°/120° thresholds. A side view needs only
+one visible shoulder and one full leg. Short tracking gaps are tolerated; longer
+losses require standing again before the next rep.
+
+Calibration stays in this camera window through pauses, not across reloads or camera
+switches. Recalibrate after moving the camera or changing your position; the app
+also invalidates calibration when it detects a large foot-position/resolution change.
+This is approximate rep counting, not a form/safety assessment. If the demo cannot
+be measured, adjust framing instead of forcing a deeper squat. Check a few reps
+manually before going live. The separate cloud preview still uses its older detector.
 
 ### Counter card
 
@@ -162,13 +174,19 @@ queue transition is shown on the older challenge section of the counter overlay.
 
 | Event | Overall Owed | Completed this stream | Challenge queue |
 |---|---|---|---|
-| Matching redemption for N reps | +N, once per redemption ID | Unchanged | Add N-rep challenge |
+| Matching redemption for N reps | Unchanged | Unchanged | Add N-rep challenge, once per redemption ID |
 | Enabled Sub/Bits/tip event | Add configured amount | Unchanged | Unchanged |
 | One rep during a running queue | −1, minimum zero | +1 when Twitch is known live | Advance FIFO by one |
 | One rep in free Capture | −1, minimum zero | +1 when Twitch is known live | Unchanged |
 | New Twitch broadcast detected | Retained | Reset to zero | Retained |
 
-Queue progress is **part of the same debt**, not a second deduction.
+**Overall Owed is future debt** from enabled Sub/Bits/tip rules or manual adjustments.
+Channel Points create immediate challenges without adding debt. Completed challenge
+reps also pay down owed once; even if owed reaches zero, the challenge still needs
+its remaining reps. Both challenge and free-capture reps count as completed.
+
+Existing saved totals are preserved on upgrade, including amounts added by older
+redemption rules. Correct historical debt manually with **Adjust totals** if needed.
 
 - Redemptions queue while the app is running, even with the camera closed.
 - Nothing automatically opens a camera, starts a challenge or soft-locks your game.
@@ -189,10 +207,19 @@ at receipt, not historical stream attribution.
 
 All sources are optional and initially disabled. Save each source's rate before testing.
 
+For subscription-only owed accrual, open **Integrations → Auto-add squats**, enable
+Twitch subs and disable Bits, Streamlabs and StreamElements, then save. Set the
+per-sub amount as desired; gifts count per subscription. Channel Points only queue
+the next set, and completing challenge reps still reduces existing owed.
+
 - **Twitch subs:** new and gifted subscriptions; a gift bundle counts each gift once.
   Automatic renewals / resub chat messages are not counted.
 - **Bits:** whole configured units per event. For example, 100 Bits → 3 reps means
   250 Bits adds 6, not 7.5.
+  Optional **Large Cheer bundle**: count full bundles first, then remaining Bits
+  at the base rate. Base 100 → 1 plus bundle 1000 → 15 gives 500 → 5, 1200 → 17,
+  and 2000 → 30. Two separate 500-Bit Cheers still add 5 each. Remainders do not
+  carry between events. A bundle size must be a larger multiple of the base unit.
 - **Streamlabs / StreamElements:** separate amount, currency and rep settings.
   USD 2.50 → 4 reps means USD 5.01 adds 8. Remainders are discarded per event.
   Other currencies are ignored; there is no currency conversion.
@@ -295,11 +322,11 @@ visibility. Never commit a Riot key.
 ## 9. Current limits and next improvements
 
 This is suitable for guided private testing, not yet a polished public release.
-There is no installer, auto-update, camera calibration wizard, queue undo/cancel UI,
+There is no installer, auto-update, queue undo/cancel UI,
 automatic refund handling or offline event-history sync. Renewals are excluded.
 The legacy `/squat-popup` workflow is not the main workflow described here.
 
-Next priorities: camera calibration, explicit queue corrections, automatic private
+Next priorities: real-world calibration validation, explicit queue corrections, automatic private
 backups, control API protection, and a Windows distribution package. Real camera,
 long-running stream, reconnect and payment-provider tests remain necessary.
 
@@ -310,8 +337,10 @@ From the project environment:
 ```bash
 python -m unittest discover -s tests/python -p "test_*.py"
 node tests/javascript/test_camera_outbox.cjs
+node tests/javascript/test_squat_detector.mjs
+node --experimental-vm-modules tests/javascript/test_local_calibration.mjs
 ```
 
-The second command requires Node.js and uses mocked browser storage/network, not a
-real camera. Passing these tests does not validate Streamlabs window capture or
+The JavaScript commands require Node.js and use simulated poses, browser storage
+and network, not a real camera. Passing these tests does not validate Streamlabs window capture or
 live provider credentials.

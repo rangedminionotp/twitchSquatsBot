@@ -4,7 +4,7 @@ let rulesLoaded = false;
 let listenerEnabled = false;
 let activeChallenge = null;
 let accountId = null;
-const ruleFields = {reward_id:'rewardId', reward_reps:'rewardReps', sub_reps:'subReps', gift_reps:'giftReps', bits_unit:'bitsUnit', bits_reps:'bitsReps'};
+const ruleFields = {reward_id:'rewardId', reward_reps:'rewardReps', sub_reps:'subReps', gift_reps:'giftReps', bits_unit:'bitsUnit', bits_reps:'bitsReps', bits_bundle_unit:'bitsBundleUnit', bits_bundle_reps:'bitsBundleReps'};
 const $ = id => document.getElementById(id);
 const overlay = document.body.classList.contains('overlay');
 async function request(path, body) {
