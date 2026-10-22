@@ -11,6 +11,11 @@
 - `docs/`: developer documentation. See [FRONTEND.md](FRONTEND.md).
 - `README.md`, `README.zh-CN.md`, `requirements.txt`: root-level setup and dependency files.
 
+The experimental cloud preview lives in `squat_capture/cloud/` with its separate
+browser surfaces in `static/cloud/`. `community.py` owns the Viewer contribution
+ledger, daily caps, speed flags and moderation; `viewer-core.mjs` owns personal
+calibration and the local rep state machine. See [VIEWER_COMMUNITY.md](VIEWER_COMMUNITY.md).
+
 ## Backend responsibilities
 
 - `twitch_eventsub_listener.py`: HTTP server, JSON APIs, event handling and challenge coordination.

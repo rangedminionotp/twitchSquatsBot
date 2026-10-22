@@ -31,8 +31,11 @@ local app. It currently covers login, isolated counters, trigger rules, a signed
 event receiver, persistent queues, read-only overlay links and opt-in Twitch
 subscription lifecycle management, plus challenge controls and a replay-safe
 capture protocol with a browser Webcam/Capture page and saved-progress recovery.
+It also includes a local-only Viewer Community Squats MVP: Viewers calibrate and
+count in their own browser, contribute at most 100 reps per day, and never upload
+video or pose landmarks. See [the Viewer Community guide](docs/VIEWER_COMMUNITY.md).
 Real-provider/device validation and production hardening are **not complete yet**;
-this is not a public release.
+this is not a public release and has not been connected to a public URL.
 See [cloud setup and remaining work](docs/CLOUD.md). Do not expose the local
 control server to the Internet as a substitute for the cloud service.
 

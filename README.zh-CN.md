@@ -6,6 +6,8 @@
 
 **目前是内测版，需要从源码启动，不是双击安装的软件。** 先私下测试摄像头、识别和直播来源，再正式使用。
 
+独立的 cloud preview 现在包含一版仅限本地测试的 Viewer Community Squats：观众在自己的浏览器完成校准和识别，每天最多贡献 100 个，不上传视频或姿态 landmark。目前尚未连接 public URL，详见 [Viewer Community 本地 MVP](docs/VIEWER_COMMUNITY.md)。
+
 ## 1. 安装与启动
 
 下载仓库 ZIP 并解压，或用 Git 克隆仓库。安装 Python 3，在项目目录打开终端。需要联网安装依赖、登录 Twitch 和加载动作模型。

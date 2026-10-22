@@ -6,6 +6,10 @@ Do not expose the local app's port 8080 through a public tunnel.
 
 ## Implemented
 
+- Viewer Community Squats: separate Viewer Twitch sessions, a public `/viewer`
+  page, browser-local personal calibration and pose detection, cumulative
+  contribution runs, daily 100 cap, Community Count, speed flags and broadcaster
+  revocation. See [Viewer Community local MVP](VIEWER_COMMUNITY.md).
 - Manual free-capture sets (1–500 reps), separate from the redemption queue;
   accepted reps reduce overall debt without adding new debt.
 - Twitch reward picker and stream-ID-based completion totals. Stream status is
@@ -66,13 +70,11 @@ Do not expose the local app's port 8080 through a public tunnel.
   retry safely. Expired lease recovery requires explicit review before reapplying
   a saved cumulative total. Webcam mode never increments counters.
 
-**Not implemented:** Donation platforms, free capture outside queued challenges,
-stream-session totals,
-account deletion, deployment and production operational hardening. The UI labels
-these omissions explicitly. Camera code is covered by mocked integration tests;
-real-device accuracy and OBS/Streamlabs window capture still require validation.
+**Not part of this milestone:** deployment and production operational hardening.
+Camera code is covered by mocked integration tests; real-device accuracy and
+OBS/Streamlabs window capture still require validation.
 No camera/video upload is implemented. No existing local credentials or counters
-are imported. Cloud browser sessions expire after 30 minutes in this milestone;
+are imported. Cloud browser sessions expire after 12 hours;
 background token maintenance does not extend browser sessions. Sign out ends
 the browser session, not the underlying Twitch grant. Revoking access on Twitch
 is discovered during validation. Existing read-only overlay links remain valid.
@@ -89,7 +91,10 @@ is discovered during validation. Existing read-only overlay links remain valid.
 4. Generate a Fernet key once, store it securely separately from the database,
    and keep it stable across restarts. Losing it makes stored credentials unreadable.
 5. Run `python -m squat_capture.cloud`, then open `http://127.0.0.1:8090`.
-6. Sign in, change the manual owed total, generate an overlay URL and add it to
+6. To test Viewer contributions, sign in once as the broadcaster, set
+   `CLOUD_COMMUNITY_OWNER_ID` to that numeric Twitch ID, restart, then open
+   `http://127.0.0.1:8090/viewer`. See [the Viewer guide](VIEWER_COMMUNITY.md).
+7. Sign in, change the manual owed total, generate an overlay URL and add it to
    OBS as a Browser Source. Resetting the URL revokes the previous one. Treat it
    as private: it grants read access but does not grant control access.
 
@@ -101,6 +106,7 @@ The preview uses its own `.cloud-data/cloud.sqlite3`, ignored by Git. If you set
 
 ```text
 python -m unittest tests.python.test_cloud -v
+python -m unittest tests.python.test_community -v
 python -m unittest discover -s tests/python -q
 ```
 
@@ -156,13 +162,15 @@ credentials; provider OAuth onboarding is not implemented.
    capture. Stream sessions and free capture are implemented. Inference
    currently runs at up to 12.5 FPS on the main thread; benchmark before considering
    a worker. See [camera usage and protocol](CLOUD_CAPTURE.md).
-4. Reuse the full control UI only after its APIs are tenant-aware. Do not route
+4. Validate `/viewer` with two Twitch accounts and real phone/desktop cameras,
+   including calibration, refresh/retry, daily rollover, flags and revocation.
+5. Reuse the full control UI only after its APIs are tenant-aware. Do not route
    cloud requests into the local singleton-based handler.
-5. Review and exercise the supplied HTTPS proxy/service templates, backup restore,
+6. Review and exercise the supplied HTTPS proxy/service templates, backup restore,
    enrollment and deletion flow in a deployment security review. These are not
    deployed or verified on a production host. See [deployment reference](CLOUD_DEPLOY.md).
    The standard-library HTTP listener is not an Internet edge server.
-6. Validate on two real Twitch accounts and OBS, then select a host and budget.
+7. Validate on two real Twitch accounts and OBS, then select a host and budget.
    SQLite is a single-instance preview choice, not a multi-replica database.
 
 No hosting account, paid resource, DNS record or public URL is created by this
