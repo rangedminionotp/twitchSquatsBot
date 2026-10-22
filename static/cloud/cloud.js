@@ -23,6 +23,34 @@ function streamTotals(stream) {
   $('streamCompleted').textContent = stream.state==='checking' || stream.state==='unavailable' ? '—' : stream.completed;
   $('streamState').textContent = {live:'Live',offline:'Offline · last stream retained',checking:'Checking Twitch stream',unavailable:'Twitch unavailable · lifetime still counts'}[stream.state] || 'Checking';
 }
+async function refreshCommunity() {
+  try {
+    const data=await request('/api/community/admin');
+    $('communityAdmin').hidden=false; $('communityAdminTotal').textContent=data.community_total;
+    $('communityContributions').replaceChildren();
+    for (const item of data.contributions) {
+      const row=document.createElement('li');
+      const when=new Date(item.created*1000).toLocaleString();
+      row.append(document.createTextNode(`${item.viewer} · +${item.amount} · ${when}${item.revoked?' · revoked':''} `));
+      if (!item.revoked) {
+        const button=document.createElement('button'); button.type='button'; button.textContent='Revoke';
+        button.onclick=async()=>{
+          if(!confirm(`Revoke ${item.amount} contribution(s) from ${item.viewer}? This ends that Viewer run.`))return;
+          button.disabled=true;
+          try{await request('/api/community/revoke',{contribution_id:item.id});await refreshCommunity();}
+          catch(error){$('communityAdminStatus').textContent=error.message;button.disabled=false;}
+        };
+        row.append(button);
+      }
+      $('communityContributions').append(row);
+    }
+    if(!data.contributions.length)$('communityContributions').textContent='No Viewer contributions yet.';
+    $('communityAdminStatus').textContent='';
+  } catch (error) {
+    $('communityAdmin').hidden=true;
+    if (error.status!==403 && error.status!==503) throw error;
+  }
+}
 async function refresh() {
   try {
     if (overlay) {
@@ -36,6 +64,7 @@ async function refresh() {
       $('login').hidden = true; $('account').hidden = false;
       $('name').textContent = 'Connected as ' + data.user.login; totals(data.user);
       streamTotals(data.stream);
+      await refreshCommunity();
       renderDonations(data.donations,data.donation_status,request);
       if (document.activeElement !== $('newOwed')) $('newOwed').value = data.user.owed;
       if (!rulesLoaded) {

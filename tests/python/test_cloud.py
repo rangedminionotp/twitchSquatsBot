@@ -343,6 +343,12 @@ class CloudTests(unittest.TestCase):
             self.assertTrue(dict(headers)['Content-Type'].startswith(mime))
         self.assertEqual(self.call('/assets/server.py')[0],404)
 
+    def test_broadcaster_page_includes_community_moderation(self):
+        status,body,_ = self.call('/')
+        self.assertEqual(status,200)
+        self.assertIn(b'id="communityAdmin"',body)
+        self.assertIn(b'/viewer',body)
+
     def test_oauth_failures_do_not_leak_provider_response(self):
         state,binding = self.store.start_oauth()
         self.oauth.exchange.side_effect = RuntimeError('TEST-SENSITIVE-PROVIDER-RESPONSE')
