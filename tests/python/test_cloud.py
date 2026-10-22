@@ -215,12 +215,23 @@ class CloudTests(unittest.TestCase):
     def test_state_bound_single_use_and_expired(self):
         state,binding = self.store.start_oauth()
         self.assertFalse(self.store.consume_oauth(state,'wrong-browser'))
-        self.assertTrue(self.store.consume_oauth(state,binding))
+        self.assertEqual(self.store.consume_oauth(state,binding),'admin')
         self.assertFalse(self.store.consume_oauth(state,binding))
+        state,binding = self.store.start_oauth('viewer')
+        self.assertEqual(self.store.consume_oauth(state,binding),'viewer')
+        with self.assertRaises(ValueError):
+            self.store.start_oauth('unknown')
         state,binding = self.store.start_oauth()
         with self.store.connection() as db:
             db.execute('UPDATE oauth_states SET expires=0')
         self.assertFalse(self.store.consume_oauth(state,binding))
+
+    def test_sessions_have_explicit_roles(self):
+        viewer = self.store.login({'user_id':'33','login':'viewer'}, {'access_token':'TEST'}, role='viewer')
+        self.assertEqual(self.store.session(self.a)['role'],'admin')
+        self.assertEqual(self.store.session(viewer)['role'],'viewer')
+        with self.assertRaises(ValueError):
+            self.store.login({'user_id':'44','login':'invalid'}, {'access_token':'TEST'}, role='owner')
 
     def test_oauth_callback_browser_binding_and_cookie(self):
         status,_,headers = self.call('/auth/twitch')

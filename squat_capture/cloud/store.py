@@ -29,9 +29,11 @@ class Store:
                     owed INTEGER NOT NULL DEFAULT 0, lifetime INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS sessions (
                     hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
-                    csrf TEXT NOT NULL, expires REAL NOT NULL);
+                    csrf TEXT NOT NULL, expires REAL NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'admin');
                 CREATE TABLE IF NOT EXISTS oauth_states (
-                    hash TEXT PRIMARY KEY, binding TEXT NOT NULL, expires REAL NOT NULL);
+                    hash TEXT PRIMARY KEY, binding TEXT NOT NULL, expires REAL NOT NULL,
+                    purpose TEXT NOT NULL DEFAULT 'admin');
                 CREATE TABLE IF NOT EXISTS overlays (
                     hash TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id));
                 CREATE TABLE IF NOT EXISTS rules (
@@ -72,6 +74,12 @@ class Store:
                 db.execute('ALTER TABLE rules ADD COLUMN bits_bundle_unit INTEGER NOT NULL DEFAULT 1000')
             if 'bits_bundle_reps' not in columns:
                 db.execute('ALTER TABLE rules ADD COLUMN bits_bundle_reps INTEGER NOT NULL DEFAULT 0')
+            session_columns = {row['name'] for row in db.execute('PRAGMA table_info(sessions)')}
+            if 'role' not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
+            oauth_columns = {row['name'] for row in db.execute('PRAGMA table_info(oauth_states)')}
+            if 'purpose' not in oauth_columns:
+                db.execute("ALTER TABLE oauth_states ADD COLUMN purpose TEXT NOT NULL DEFAULT 'admin'")
 
     @contextmanager
     def connection(self):
@@ -84,26 +92,30 @@ class Store:
         finally:
             db.close()
 
-    def start_oauth(self):
+    def start_oauth(self, purpose='admin'):
+        if purpose not in ('admin', 'viewer'):
+            raise ValueError('Invalid OAuth purpose')
         state, binding = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self.connection() as db:
             db.execute('DELETE FROM oauth_states WHERE expires <= ?', (time.time(),))
-            db.execute('INSERT INTO oauth_states VALUES (?, ?, ?)',
-                       (digest(state), digest(binding), time.time() + 600))
+            db.execute('INSERT INTO oauth_states(hash,binding,expires,purpose) VALUES (?, ?, ?, ?)',
+                       (digest(state), digest(binding), time.time() + 600, purpose))
         return state, binding
 
     def consume_oauth(self, state, binding):
         if not state or not binding:
-            return False
+            return None
         with self.connection() as db:
-            row = db.execute('DELETE FROM oauth_states WHERE hash=? AND binding=? AND expires>? RETURNING hash',
+            row = db.execute('DELETE FROM oauth_states WHERE hash=? AND binding=? AND expires>? RETURNING purpose',
                              (digest(state), digest(binding), time.time())).fetchone()
-            return row is not None
+            return row['purpose'] if row else None
 
-    def login(self, identity, tokens):
+    def login(self, identity, tokens, role='admin'):
         uid, name = identity['user_id'], identity['login']
         if not isinstance(uid, str) or not uid.isdecimal() or not isinstance(name, str) or not name:
             raise ValueError('Invalid Twitch identity')
+        if role not in ('admin', 'viewer'):
+            raise ValueError('Invalid session role')
         encrypted = self.cipher.encrypt(json.dumps(tokens).encode())
         session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self.connection() as db:
@@ -116,8 +128,8 @@ class Store:
                        (uid,'connected',time.time()))
             # Browser sessions remain short; background token maintenance does
             # not extend browser login or recreate logged-out sessions.
-            db.execute('INSERT INTO sessions VALUES(?,?,?,?)',
-                       (digest(session), uid, csrf, time.time() + SESSION_SECONDS))
+            db.execute('INSERT INTO sessions(hash,user_id,csrf,expires,role) VALUES(?,?,?,?,?)',
+                       (digest(session), uid, csrf, time.time() + SESSION_SECONDS, role))
         return session
 
     def credential_snapshot(self, uid):
@@ -229,7 +241,7 @@ class Store:
 
     def session(self, token):
         with self.connection() as db:
-            row = db.execute('SELECT user_id,csrf FROM sessions WHERE hash=? AND expires>?',
+            row = db.execute('SELECT user_id,csrf,role FROM sessions WHERE hash=? AND expires>?',
                              (digest(token), time.time())).fetchone()
             return dict(row) if row else None
 
