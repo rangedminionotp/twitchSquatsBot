@@ -91,6 +91,29 @@ class CommunityTests(unittest.TestCase):
         self.assertEqual(status['community_total'],2)
         self.assertEqual(fresh['target'],20)
 
+    def test_owner_can_revoke_a_contribution_once(self):
+        run = self.calibrated_run()
+        self.advance(2)
+        self.community.progress('22',run['id'],1,2,2000)
+        recent = self.community.admin('11')
+        self.assertEqual(recent['community_total'],2)
+        contribution = recent['contributions'][0]
+        self.assertEqual(contribution['viewer'],'viewer')
+        revoked = self.community.revoke('11',contribution['id'])
+        self.assertEqual(revoked['community_total'],0)
+        self.assertTrue(revoked['contributions'][0]['revoked'])
+        self.assertEqual(self.community.viewer('22')['today'],0)
+        self.assertEqual(self.community.revoke('11',contribution['id'])['community_total'],0)
+        with self.assertRaises(CommunityConflict):
+            self.community.progress('22',run['id'],2,3,3000)
+        self.assertNotEqual(self.community.start('22')['id'],run['id'])
+
+    def test_non_owner_cannot_moderate_channel(self):
+        with self.assertRaises(CommunityConflict):
+            self.community.admin('22')
+        with self.assertRaises(CommunityConflict):
+            self.community.revoke('22',1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -200,6 +200,15 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                     self.reply(200, community.public())
                 except CommunityConflict as error:
                     self.reply(503, {'error':str(error)})
+            elif path == '/api/community/admin':
+                session = store.session(self.cookie(session_cookie))
+                if not session:
+                    self.reply(401, {'error':'Login required'})
+                elif session['role'] != 'admin':
+                    self.reply(403, {'error':'Broadcaster access required'})
+                else:
+                    try:self.reply(200, community.admin(session['user_id']))
+                    except CommunityConflict as error:self.reply(403, {'error':str(error)})
             elif path == '/api/viewer':
                 session = store.session(self.cookie(session_cookie))
                 if not session:
@@ -340,6 +349,8 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                         self.reply(409,{'error':str(error)})
                         return
                     self.reply(200,{'ok':True},headers=[self.cookie_header(session_cookie,'',0)])
+                elif path == '/api/community/revoke' and set(payload) == {'contribution_id'}:
+                    self.reply(200,community.revoke(session['user_id'],payload['contribution_id']))
                 elif path == '/api/viewer/start' and not payload:
                     self.reply(200, {'run':community.start(session['user_id']),
                                      'community':community.viewer(session['user_id'])})

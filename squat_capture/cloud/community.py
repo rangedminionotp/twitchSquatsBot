@@ -94,6 +94,20 @@ class Community:
                     'daily_limit': channel['daily_limit'], 'run_target': channel['run_target'],
                     'day': self._day(now)}
 
+    def admin(self, owner_id, limit=30):
+        if owner_id != self.owner_id:
+            raise CommunityConflict('Only the configured channel owner can moderate contributions')
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('Invalid contribution list limit')
+        with self.store.connection() as db:
+            login, channel = self._channel(db)
+            rows = db.execute('SELECT c.id,c.run_id,c.viewer_id,u.login AS viewer,c.day,c.amount,c.created,c.revoked '
+                              'FROM community_contributions c JOIN users u ON u.id=c.viewer_id '
+                              'WHERE c.owner_id=? ORDER BY c.id DESC LIMIT ?',
+                              (self.owner_id,limit)).fetchall()
+            return {'channel':login, 'community_total':channel['total'],
+                    'contributions':[dict(row) for row in rows]}
+
     def viewer(self, viewer_id):
         now, day = self.clock(), None
         with self.store.connection() as db:
@@ -196,3 +210,27 @@ class Community:
             db.execute('INSERT INTO community_contributions(owner_id,viewer_id,run_id,seq,day,amount,created) '
                        'VALUES(?,?,?,?,?,?,?)',(self.owner_id,viewer_id,run_id,sequence,row['day'],delta,now))
             return self._run(db.execute('SELECT * FROM community_runs WHERE id=?',(run_id,)).fetchone())
+
+    def revoke(self, owner_id, contribution_id):
+        if owner_id != self.owner_id:
+            raise CommunityConflict('Only the configured channel owner can moderate contributions')
+        if type(contribution_id) is not int or contribution_id < 1:
+            raise ValueError('Invalid contribution ID')
+        now = self.clock()
+        with self.store.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._channel(db)
+            row = db.execute('SELECT * FROM community_contributions WHERE id=? AND owner_id=?',
+                             (contribution_id,self.owner_id)).fetchone()
+            if not row:
+                raise CommunityConflict('Contribution not found')
+            if not row['revoked']:
+                db.execute('UPDATE community_contributions SET revoked=1 WHERE id=?',(contribution_id,))
+                db.execute('UPDATE community_channels SET total=MAX(0,total-?) WHERE owner_id=?',
+                           (row['amount'],self.owner_id))
+                db.execute('UPDATE community_viewer_daily SET accepted=MAX(0,accepted-?) '
+                           'WHERE owner_id=? AND viewer_id=? AND day=?',
+                           (row['amount'],self.owner_id,row['viewer_id'],row['day']))
+                db.execute("UPDATE community_runs SET status='revoked',updated=? WHERE id=?",
+                           (now,row['run_id']))
+        return self.admin(owner_id)

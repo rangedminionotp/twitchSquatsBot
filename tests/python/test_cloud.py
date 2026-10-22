@@ -309,6 +309,24 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(self.call('/api/viewer/progress','POST',viewer,too_fast)[0],409)
         self.assertEqual(self.call('/api/viewer/progress','POST',viewer,{**too_fast,'user_id':'22'})[0],400)
 
+    def test_owner_can_review_and_revoke_viewer_contribution(self):
+        viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
+        _,raw,_ = self.call('/api/viewer/start','POST',viewer,{})
+        run = json.loads(raw)['run']
+        calibration = {'run_id':run['id'],'standing_angle':165,'squat_angle':95,'duration_ms':3000}
+        self.call('/api/viewer/calibrate','POST',viewer,calibration)
+        self.now[0] += 1
+        self.call('/api/viewer/progress','POST',viewer,{'run_id':run['id'],'sequence':1,'count':1,'elapsed_ms':1000})
+        status,raw,_ = self.call('/api/community/admin',token=self.a)
+        self.assertEqual(status,200)
+        contribution = json.loads(raw)['contributions'][0]
+        self.assertEqual(contribution['viewer'],'charlie')
+        status,raw,_ = self.call('/api/community/revoke','POST',self.a,{'contribution_id':contribution['id']})
+        self.assertEqual(status,200)
+        self.assertEqual(json.loads(raw)['community_total'],0)
+        self.assertEqual(json.loads(self.call('/api/viewer',token=viewer)[1])['community']['today'],0)
+        self.assertEqual(self.call('/api/community/revoke','POST',viewer,{'contribution_id':contribution['id']})[0],403)
+
     def test_profile_and_response_security_headers(self):
         status,body,headers = self.call('/api/me',token=self.a)
         self.assertEqual(status,200)
