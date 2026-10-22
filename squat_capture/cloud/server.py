@@ -17,6 +17,7 @@ from squat_capture.cloud.challenges import Challenges, ChallengeConflict
 from squat_capture.cloud.twitch_data import TwitchData
 from squat_capture.cloud.donations import Donations, DonationWorkers
 from squat_capture.cloud.http_safety import BoundedHTTPServer, RateLimiter
+from squat_capture.cloud.community import Community, CommunityConflict
 
 STATIC = Path(__file__).resolve().parents[2] / 'static' / 'cloud'
 
@@ -33,6 +34,8 @@ class Settings:
     eventsub_secret: str = ''
     enable_events: bool = False
     allowed_users: str = ''
+    community_owner_id: str = ''
+    community_timezone: str = 'America/Los_Angeles'
 
     def __post_init__(self):
         url = urlsplit(self.origin)
@@ -47,6 +50,8 @@ class Settings:
             raise ValueError('Cloud Twitch client ID, client secret and encryption key are required')
         if self.eventsub_secret and (not self.eventsub_secret.isascii() or not 32 <= len(self.eventsub_secret) <= 100):
             raise ValueError('EventSub secret must be 32-100 ASCII characters')
+        if self.community_owner_id and not self.community_owner_id.isdecimal():
+            raise ValueError('CLOUD_COMMUNITY_OWNER_ID must be a numeric Twitch user ID')
         if self.enable_events and (self.development or url.scheme != 'https' or url.port not in (None, 443) or not self.eventsub_secret):
             raise ValueError('Live EventSub requires HTTPS on port 443 and CLOUD_EVENTSUB_SECRET')
 
@@ -57,12 +62,15 @@ class Settings:
                    os.environ.get('CLOUD_DATABASE', '.cloud-data/cloud.sqlite3'),
                    int(os.environ.get('CLOUD_PORT', '8090')), os.environ.get('CLOUD_DEV') == '1',
                    os.environ.get('CLOUD_EVENTSUB_SECRET', ''), os.environ.get('CLOUD_ENABLE_EVENTS') == '1',
-                   os.environ.get('CLOUD_ALLOWED_USERS',''))
+                   os.environ.get('CLOUD_ALLOWED_USERS',''), os.environ.get('CLOUD_COMMUNITY_OWNER_ID',''),
+                   os.environ.get('CLOUD_COMMUNITY_TIMEZONE','America/Los_Angeles'))
 
 
-def make_handler(settings, store, oauth, token_service=None, twitch_data=None, donation_workers=None):
+def make_handler(settings, store, oauth, token_service=None, twitch_data=None, donation_workers=None,
+                 community=None):
     challenges = Challenges(store)
     donations = donation_workers.repository if donation_workers else Donations(store)
+    community = community or Community(store, settings.community_owner_id, settings.community_timezone)
     limiter = RateLimiter()
     session_cookie = 'sc_session' if settings.development else '__Host-sc_session'
     state_cookie = 'sc_oauth' if settings.development else '__Host-sc_oauth'
@@ -187,6 +195,22 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                                  'donations': donations.public(session['user_id']),
                                  'donation_status': donation_workers.status(session['user_id']) if donation_workers else {},
                                  'capture': 'browser_preview'})
+            elif path == '/api/community':
+                try:
+                    self.reply(200, community.public())
+                except CommunityConflict as error:
+                    self.reply(503, {'error':str(error)})
+            elif path == '/api/viewer':
+                session = store.session(self.cookie(session_cookie))
+                if not session:
+                    self.reply(401, {'error':'Login required'})
+                    return
+                try:
+                    profile = store.profile(session['user_id'])
+                    self.reply(200, {'user':{'login':profile['login']}, 'csrf':session['csrf'],
+                                     'community':community.viewer(session['user_id'])})
+                except CommunityConflict as error:
+                    self.reply(503, {'error':str(error)})
             elif path == '/api/rewards':
                 session = store.session(self.cookie(session_cookie))
                 if not session:
@@ -260,7 +284,9 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
             if not session:
                 self.reply(401, {'error': 'Login required'})
                 return
-            if session['role'] != 'admin':
+            path = urlsplit(self.path).path
+            viewer_paths = {'/api/viewer/start','/api/viewer/calibrate','/api/viewer/progress'}
+            if session['role'] != 'admin' and path not in viewer_paths:
                 self.reply(403, {'error': 'Broadcaster access required'})
                 return
             if not limiter.allow('write:'+session['user_id'],300):
@@ -277,7 +303,6 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
                     raise ValueError('Expected a JSON object')
-                path = urlsplit(self.path).path
                 if path == '/api/owed' and set(payload) == {'owed'}:
                     self.reply(200, {'user': store.set_owed(session['user_id'], payload['owed'])})
                 elif path == '/api/rules':
@@ -314,9 +339,22 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                         self.reply(409,{'error':str(error)})
                         return
                     self.reply(200,{'ok':True},headers=[self.cookie_header(session_cookie,'',0)])
+                elif path == '/api/viewer/start' and not payload:
+                    self.reply(200, {'run':community.start(session['user_id']),
+                                     'community':community.viewer(session['user_id'])})
+                elif path == '/api/viewer/calibrate' and set(payload) == {'run_id','standing_angle','squat_angle','duration_ms'}:
+                    run = community.calibrate(session['user_id'],payload['run_id'],payload['standing_angle'],
+                                              payload['squat_angle'],payload['duration_ms'])
+                    self.reply(200, {'run':run, 'community':community.viewer(session['user_id'])})
+                elif path == '/api/viewer/progress' and set(payload) == {'run_id','sequence','count','elapsed_ms'}:
+                    run = community.progress(session['user_id'],payload['run_id'],payload['sequence'],
+                                             payload['count'],payload['elapsed_ms'])
+                    self.reply(200, {'run':run, 'community':community.viewer(session['user_id'])})
                 else:
                     self.reply(400, {'error': 'Unknown action or unexpected fields'})
             except ChallengeConflict as error:
+                self.reply(409, {'error':str(error)})
+            except CommunityConflict as error:
                 self.reply(409, {'error':str(error)})
             except (ValueError, UnicodeDecodeError):
                 self.reply(400, {'error': 'Invalid request or counter value'})

@@ -17,6 +17,7 @@ if Fernet:
     from squat_capture.cloud.store import Store, digest
     from squat_capture.cloud.server import Settings, make_handler, ThreadingHTTPServer
     from squat_capture.cloud.oauth import TwitchOAuth
+    from squat_capture.cloud.community import Community
 
 
 @unittest.skipUnless(Fernet, 'Install requirements-cloud.txt to run cloud tests')
@@ -28,11 +29,15 @@ class CloudTests(unittest.TestCase):
         self.store = Store(Path(self.directory.name) / 'cloud.sqlite3', self.key)
         self.a = self.store.login({'user_id':'11','login':'alice'}, {'access_token':'TEST-ACCESS-A','refresh_token':'TEST-REFRESH-A'})
         self.b = self.store.login({'user_id':'22','login':'bob'}, {'access_token':'TEST-ACCESS-B'})
-        self.settings = Settings('http://127.0.0.1:8090','test-client','test-secret',self.key.decode(),str(self.store.path),development=True)
+        self.settings = Settings('http://127.0.0.1:8090','test-client','test-secret',self.key.decode(),str(self.store.path),
+                                 development=True,community_owner_id='11')
+        self.now = [1_800_000_000.0]
+        self.community = Community(self.store,'11',clock=lambda:self.now[0])
         self.oauth = Mock()
         self.oauth.authorize_url.side_effect = lambda state: 'https://id.twitch.tv/oauth2/authorize?state='+state
         self.oauth.exchange.return_value = ({'user_id':'11','login':'alice'}, {'access_token':'TEST-ACCESS-A'})
-        self.server = ThreadingHTTPServer(('127.0.0.1',0), make_handler(self.settings,self.store,self.oauth))
+        self.server = ThreadingHTTPServer(('127.0.0.1',0), make_handler(self.settings,self.store,self.oauth,
+                                                                         community=self.community))
         self.thread = threading.Thread(target=self.server.serve_forever,daemon=True)
         self.thread.start()
         self.addCleanup(self.close_server)
@@ -270,6 +275,39 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertIn(b'Video and pose landmarks are never uploaded',body)
         self.assertIn('camera=(self)',dict(headers)['Permissions-Policy'])
+
+    def test_viewer_contribution_api_uses_session_identity(self):
+        viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
+        status,raw,_ = self.call('/api/viewer',token=viewer)
+        self.assertEqual(status,200)
+        data = json.loads(raw)
+        self.assertEqual(data['user'],{'login':'charlie'})
+        self.assertEqual(data['community']['daily_limit'],100)
+        status,raw,_ = self.call('/api/viewer/start','POST',viewer,{})
+        self.assertEqual(status,200)
+        run = json.loads(raw)['run']
+        self.assertEqual(run['target'],20)
+        calibration = {'run_id':run['id'],'standing_angle':165,'squat_angle':95,'duration_ms':3000}
+        self.assertEqual(self.call('/api/viewer/calibrate','POST',viewer,calibration)[0],200)
+        self.now[0] += 1
+        progress = {'run_id':run['id'],'sequence':1,'count':1,'elapsed_ms':1000}
+        self.assertEqual(self.call('/api/viewer/progress','POST',viewer,progress)[0],200)
+        self.assertEqual(self.call('/api/viewer/progress','POST',viewer,progress)[0],200)
+        data = json.loads(self.call('/api/viewer',token=viewer)[1])
+        self.assertEqual(data['community']['today'],1)
+        self.assertEqual(json.loads(self.call('/api/community')[1])['community_total'],1)
+        self.assertEqual(self.call('/api/owed','POST',viewer,{'owed':10})[0],403)
+
+    def test_viewer_api_rejects_unexpected_fields_and_impossible_speed(self):
+        viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
+        _,raw,_ = self.call('/api/viewer/start','POST',viewer,{})
+        run = json.loads(raw)['run']
+        calibration = {'run_id':run['id'],'standing_angle':165,'squat_angle':95,'duration_ms':3000}
+        self.assertEqual(self.call('/api/viewer/calibrate','POST',viewer,calibration)[0],200)
+        self.now[0] += 1
+        too_fast = {'run_id':run['id'],'sequence':1,'count':2,'elapsed_ms':500}
+        self.assertEqual(self.call('/api/viewer/progress','POST',viewer,too_fast)[0],409)
+        self.assertEqual(self.call('/api/viewer/progress','POST',viewer,{**too_fast,'user_id':'22'})[0],400)
 
     def test_profile_and_response_security_headers(self):
         status,body,headers = self.call('/api/me',token=self.a)
