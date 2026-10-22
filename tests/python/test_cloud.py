@@ -307,6 +307,9 @@ class CloudTests(unittest.TestCase):
         self.now[0] += 1
         too_fast = {'run_id':run['id'],'sequence':1,'count':2,'elapsed_ms':500}
         self.assertEqual(self.call('/api/viewer/progress','POST',viewer,too_fast)[0],409)
+        flags = json.loads(self.call('/api/community/admin',token=self.a)[1])['flags']
+        self.assertEqual(flags[0]['viewer'],'charlie')
+        self.assertEqual(flags[0]['hits'],1)
         self.assertEqual(self.call('/api/viewer/progress','POST',viewer,{**too_fast,'user_id':'22'})[0],400)
 
     def test_owner_can_review_and_revoke_viewer_contribution(self):

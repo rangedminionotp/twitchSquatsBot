@@ -45,6 +45,13 @@ async function refreshCommunity() {
       $('communityContributions').append(row);
     }
     if(!data.contributions.length)$('communityContributions').textContent='No Viewer contributions yet.';
+    $('communityFlags').replaceChildren();
+    for(const flag of data.flags){
+      const row=document.createElement('li');
+      row.textContent=`${flag.viewer} · impossible speed · ${flag.hits} rejected attempt(s) · ${new Date(flag.last_seen*1000).toLocaleString()}`;
+      $('communityFlags').append(row);
+    }
+    if(!data.flags.length)$('communityFlags').textContent='No automatic review flags.';
     $('communityAdminStatus').textContent='';
   } catch (error) {
     $('communityAdmin').hidden=true;

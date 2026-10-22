@@ -62,6 +62,8 @@ class CommunityTests(unittest.TestCase):
             self.community.progress('22',run['id'],2,1,1000)
         with self.assertRaises(CommunityConflict):
             self.community.progress('22',run['id'],1,2,1500)
+        self.assertEqual(self.community.admin('11')['flags'][0]['hits'],1)
+        self.assertEqual(self.community.admin('11')['community_total'],0)
         self.community.progress('22',run['id'],1,1,1000)
         self.advance(1)
         with self.assertRaises(CommunityConflict):

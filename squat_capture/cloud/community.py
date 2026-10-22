@@ -57,6 +57,12 @@ class Community:
                     seq INTEGER NOT NULL, day TEXT NOT NULL, amount INTEGER NOT NULL,
                     created REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(run_id,seq));
+                CREATE TABLE IF NOT EXISTS community_flags (
+                    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    viewer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    day TEXT NOT NULL, reason TEXT NOT NULL,
+                    hits INTEGER NOT NULL DEFAULT 1, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
+                    PRIMARY KEY(owner_id,viewer_id,day,reason));
             ''')
 
     def _day(self, now):
@@ -105,8 +111,13 @@ class Community:
                               'FROM community_contributions c JOIN users u ON u.id=c.viewer_id '
                               'WHERE c.owner_id=? ORDER BY c.id DESC LIMIT ?',
                               (self.owner_id,limit)).fetchall()
+            flags = db.execute('SELECT f.viewer_id,u.login AS viewer,f.day,f.reason,f.hits,f.first_seen,f.last_seen '
+                               'FROM community_flags f JOIN users u ON u.id=f.viewer_id '
+                               'WHERE f.owner_id=? ORDER BY f.last_seen DESC LIMIT ?',
+                               (self.owner_id,limit)).fetchall()
             return {'channel':login, 'community_total':channel['total'],
-                    'contributions':[dict(row) for row in rows]}
+                    'contributions':[dict(row) for row in rows],
+                    'flags':[dict(row) for row in flags]}
 
     def viewer(self, viewer_id):
         now, day = self.clock(), None
@@ -176,6 +187,7 @@ class Community:
         if sequence < 1 or count < 1 or elapsed_ms < 0:
             raise ValueError('Invalid progress values')
         now = self.clock()
+        speed_error, result = None, None
         with self.store.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             _login, channel = self._channel(db)
@@ -193,23 +205,32 @@ class Community:
             if count > row['target'] or elapsed_ms <= row['client_elapsed_ms']:
                 raise CommunityConflict('Progress exceeds this run')
             if elapsed_ms < count * self.MIN_CLIENT_REP_MS:
-                raise CommunityConflict('Reported movement is too fast')
-            if now - row['calibrated_at'] < count * self.MIN_SERVER_REP_SECONDS:
-                raise CommunityConflict('Contribution arrived too quickly')
-            delta = count - row['accepted']
-            today = self._daily(db, viewer_id, row['day'])
-            if today + delta > channel['daily_limit']:
-                raise CommunityConflict('Daily contribution limit reached')
-            status = 'completed' if count == row['target'] or today + delta == channel['daily_limit'] else 'active'
-            db.execute('UPDATE community_runs SET accepted=?,seq=?,client_elapsed_ms=?,status=?,updated=? WHERE id=?',
-                       (count,sequence,elapsed_ms,status,now,run_id))
-            db.execute('INSERT INTO community_viewer_daily(owner_id,viewer_id,day,accepted) VALUES(?,?,?,?) '
-                       'ON CONFLICT(owner_id,viewer_id,day) DO UPDATE SET accepted=accepted+excluded.accepted',
-                       (self.owner_id,viewer_id,row['day'],delta))
-            db.execute('UPDATE community_channels SET total=total+? WHERE owner_id=?',(delta,self.owner_id))
-            db.execute('INSERT INTO community_contributions(owner_id,viewer_id,run_id,seq,day,amount,created) '
-                       'VALUES(?,?,?,?,?,?,?)',(self.owner_id,viewer_id,run_id,sequence,row['day'],delta,now))
-            return self._run(db.execute('SELECT * FROM community_runs WHERE id=?',(run_id,)).fetchone())
+                speed_error = 'Reported movement is too fast'
+            elif now - row['calibrated_at'] < count * self.MIN_SERVER_REP_SECONDS:
+                speed_error = 'Contribution arrived too quickly'
+            if speed_error:
+                db.execute('INSERT INTO community_flags(owner_id,viewer_id,day,reason,first_seen,last_seen) '
+                           'VALUES(?,?,?,?,?,?) ON CONFLICT(owner_id,viewer_id,day,reason) '
+                           'DO UPDATE SET hits=hits+1,last_seen=excluded.last_seen',
+                           (self.owner_id,viewer_id,row['day'],'impossible_speed',now,now))
+            else:
+                delta = count - row['accepted']
+                today = self._daily(db, viewer_id, row['day'])
+                if today + delta > channel['daily_limit']:
+                    raise CommunityConflict('Daily contribution limit reached')
+                status = 'completed' if count == row['target'] or today + delta == channel['daily_limit'] else 'active'
+                db.execute('UPDATE community_runs SET accepted=?,seq=?,client_elapsed_ms=?,status=?,updated=? WHERE id=?',
+                           (count,sequence,elapsed_ms,status,now,run_id))
+                db.execute('INSERT INTO community_viewer_daily(owner_id,viewer_id,day,accepted) VALUES(?,?,?,?) '
+                           'ON CONFLICT(owner_id,viewer_id,day) DO UPDATE SET accepted=accepted+excluded.accepted',
+                           (self.owner_id,viewer_id,row['day'],delta))
+                db.execute('UPDATE community_channels SET total=total+? WHERE owner_id=?',(delta,self.owner_id))
+                db.execute('INSERT INTO community_contributions(owner_id,viewer_id,run_id,seq,day,amount,created) '
+                           'VALUES(?,?,?,?,?,?,?)',(self.owner_id,viewer_id,run_id,sequence,row['day'],delta,now))
+                result = self._run(db.execute('SELECT * FROM community_runs WHERE id=?',(run_id,)).fetchone())
+        if speed_error:
+            raise CommunityConflict(speed_error)
+        return result
 
     def revoke(self, owner_id, contribution_id):
         if owner_id != self.owner_id:
