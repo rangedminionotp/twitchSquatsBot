@@ -77,7 +77,9 @@ class Community:
     def _run(row):
         if not row:
             return None
-        return {key: row[key] for key in ('id','target','accepted','seq','status','calibrated')}
+        result = {key: row[key] for key in ('id','target','accepted','seq','status','calibrated')}
+        result['elapsed_ms'] = row['client_elapsed_ms']
+        return result
 
     def _daily(self, db, viewer_id, day):
         row = db.execute('SELECT accepted FROM community_viewer_daily WHERE owner_id=? AND viewer_id=? AND day=?',

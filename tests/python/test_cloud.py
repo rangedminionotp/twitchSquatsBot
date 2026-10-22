@@ -160,7 +160,7 @@ class CloudTests(unittest.TestCase):
         self.assertIn('camera=(self)',dict(headers)['Permissions-Policy'])
         _, _, headers = self.call('/')
         self.assertNotIn('cdn.jsdelivr.net',dict(headers)['Content-Security-Policy'])
-        for asset in ('camera.js','capture-core.mjs','pose.mjs','camera.css'):
+        for asset in ('camera.js','capture-core.mjs','pose.mjs','camera.css','viewer.js','viewer-core.mjs','viewer.css'):
             self.assertEqual(self.call('/assets/'+asset)[0],200)
         self.assertEqual(self.call('/assets/../camera.html')[0],404)
 
@@ -273,7 +273,7 @@ class CloudTests(unittest.TestCase):
     def test_viewer_shell_is_public_and_camera_scoped(self):
         status,body,headers = self.call('/viewer')
         self.assertEqual(status,200)
-        self.assertIn(b'Video and pose landmarks are never uploaded',body)
+        self.assertIn(b'Video and pose landmarks stay in your browser',body)
         self.assertIn('camera=(self)',dict(headers)['Permissions-Policy'])
 
     def test_viewer_contribution_api_uses_session_identity(self):

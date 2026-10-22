@@ -3,13 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Community Squats</title>
+  <link rel="stylesheet" href="/assets/viewer.css">
+  <script type="module" src="/assets/viewer.js"></script>
 </head>
 <body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <header class="topbar">
+    <a class="brand" href="/viewer" aria-label="Community Squats home"><span class="brand-mark">S</span><span>Community Squats</span></a>
+    <div class="account"><span class="live-dot"></span><span id="account">Checking session…</span><button id="logout" class="quiet" hidden>Log out</button></div>
+  </header>
   <main>
-    <h1>Community Squats</h1>
-    <p>Your camera stays on this device. Video and pose landmarks are never uploaded.</p>
-    <a href="/viewer/login">Continue with Twitch</a>
+    <section class="hero">
+      <div><p class="eyebrow">LIVE COMMUNITY CHALLENGE</p><h1>Move together.<br><span>Make it count.</span></h1>
+        <p class="intro">Complete locally verified squats and add them to <strong id="channel">the stream</strong>. Your camera never leaves this device.</p></div>
+      <div class="total-card"><span>COMMUNITY COUNT</span><strong id="communityTotal">—</strong><small>all-time verified squats</small></div>
+    </section>
+
+    <section id="loginPanel" class="login-panel" hidden>
+      <div><p class="eyebrow">TWITCH IDENTITY</p><h2>Join the experiment</h2><p>Sign in so your daily allowance and contributions stay attached to you.</p></div>
+      <a class="button primary twitch" href="/viewer/login"><span>◆</span> Continue with Twitch</a>
+    </section>
+
+    <section id="workspace" class="workspace" aria-live="polite">
+      <article class="camera-card">
+        <div class="card-head"><div><p class="eyebrow">LOCAL POSE CHECK</p><h2>Your movement</h2></div><span id="cameraBadge" class="badge">Camera off</span></div>
+        <div class="camera-stage">
+          <video id="video" autoplay playsinline muted></video><canvas id="skeleton"></canvas>
+          <div class="camera-placeholder" id="placeholder"><span class="camera-icon">◉</span><strong>Camera stays private</strong><small>Start it when you are ready</small></div>
+          <div class="angle-pill"><span>LIVE KNEE ANGLE</span><strong id="angle">—°</strong></div>
+          <div class="rep-orb"><small>THIS RUN</small><strong id="runCount">0</strong><span id="runTarget">/ 20</span></div>
+        </div>
+        <div class="camera-actions">
+          <select id="devices" aria-label="Camera device"><option value="">Default camera</option></select>
+          <button id="startCamera" class="button secondary">Start camera</button>
+          <button id="stopCamera" class="button quiet" disabled>Stop</button>
+          <button id="calibrate" class="button primary" disabled>Calibrate &amp; play</button>
+          <button id="retry" class="button warning" hidden>Retry saved rep</button>
+        </div>
+      </article>
+
+      <aside class="side-stack">
+        <article class="status-card">
+          <div class="card-head"><div><p class="eyebrow">TODAY</p><h2>Your contribution</h2></div><strong id="todayCount">— / 100</strong></div>
+          <div class="meter"><span id="dailyMeter"></span></div><p id="remaining">Sign in to see your allowance.</p>
+        </article>
+        <article class="coach-card">
+          <p class="eyebrow">FORM COACH</p><div class="coach-line"><span id="stageIndex">0</span><div><strong id="stageLabel">Ready to begin</strong><small id="stageHelp">Start the camera, then follow the calibration prompts.</small></div></div>
+          <div class="calibration-meter"><span id="calibrationMeter"></span></div>
+          <dl class="metrics"><div><dt>Current</dt><dd id="currentMetric">—°</dd></div><div><dt>Standing</dt><dd id="standingMetric">—°</dd></div><div><dt>Squat depth</dt><dd id="squatMetric">—°</dd></div><div><dt>Tracking</dt><dd id="trackingMetric">Idle</dd></div></dl>
+        </article>
+        <article class="privacy-card"><span class="shield">✓</span><div><strong>Private by design</strong><p>Video and pose landmarks stay in your browser. Only calibrated cumulative totals are sent.</p></div></article>
+      </aside>
+    </section>
+
+    <section class="flow"><div><span>01</span><strong>Sign in</strong><small>Twitch identifies your daily allowance.</small></div><i></i><div><span>02</span><strong>Calibrate</strong><small>Show one comfortable full squat.</small></div><i></i><div><span>03</span><strong>Contribute</strong><small>Every accepted rep joins the community.</small></div></section>
+    <p id="status" class="status" role="status">Loading community challenge…</p>
   </main>
 </body>
 </html>

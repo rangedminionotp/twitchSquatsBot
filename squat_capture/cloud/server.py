@@ -244,7 +244,8 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 self.reply(200, (STATIC / 'camera.html').read_bytes(), 'text/html; charset=utf-8')
             elif path == '/viewer':
                 self.reply(200, (STATIC / 'viewer.html').read_bytes(), 'text/html; charset=utf-8')
-            elif path in ('/assets/camera.js', '/assets/capture-core.mjs', '/assets/pose.mjs', '/assets/camera.css', '/assets/donations.js'):
+            elif path in ('/assets/camera.js', '/assets/capture-core.mjs', '/assets/pose.mjs', '/assets/camera.css',
+                          '/assets/donations.js', '/assets/viewer.js', '/assets/viewer-core.mjs', '/assets/viewer.css'):
                 name = path.removeprefix('/assets/')
                 mime = 'text/css' if name.endswith('.css') else 'text/javascript'
                 self.reply(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
@@ -285,7 +286,7 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 self.reply(401, {'error': 'Login required'})
                 return
             path = urlsplit(self.path).path
-            viewer_paths = {'/api/viewer/start','/api/viewer/calibrate','/api/viewer/progress'}
+            viewer_paths = {'/api/viewer/start','/api/viewer/calibrate','/api/viewer/progress','/api/logout'}
             if session['role'] != 'admin' and path not in viewer_paths:
                 self.reply(403, {'error': 'Broadcaster access required'})
                 return
