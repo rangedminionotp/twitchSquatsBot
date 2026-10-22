@@ -69,15 +69,15 @@
       </div>
       <div id="detectionDetailsCard" class="card detection-details">
         <div class="angle-readout">
-          <strong>Knee angle</strong>
+          <strong>Calibrated range</strong>
           <span id="angleValue">--°</span>
         </div>
         <div class="depth-track">
           <div id="depthFill" class="depth-fill"></div>
         </div>
         <div class="threshold-labels">
-          <span><b>STAND</b> 155°+</span>
-          <span><b>DOWN</b> 120°−</span>
+          <span>Your standing height</span>
+          <span>Your demonstrated depth</span>
         </div>
         <dl class="pose-metrics" aria-label="Live squat detection details">
           <div><dt>Current knee</dt><dd id="metricCurrentAngle">—</dd></div>
@@ -87,7 +87,7 @@
           <div><dt>Depth score</dt><dd id="metricDepthScore">—</dd></div>
           <div><dt>Tracking</dt><dd id="metricTracking">—</dd></div>
         </dl>
-        <p class="metric-note">One rep: stand → down → stand</p>
+        <p class="metric-note">Original angle mode: DOWN ≤ 120° · STAND ≥ 155°</p>
       </div>
       <div class="card">
         <strong>Camera Device</strong>
