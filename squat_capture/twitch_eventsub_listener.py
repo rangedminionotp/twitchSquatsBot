@@ -41,7 +41,7 @@ MAX_MESSAGE_AGE_SECONDS = 600
 AUTO_OPEN_POPUP = os.environ.get("AUTO_OPEN_POPUP", "1") == "1"
 POPUP_OPEN_URL = os.environ.get("POPUP_OPEN_URL", f"http://127.0.0.1:{PORT}{POPUP_PATH}")
 DEFAULT_SQUAT_TARGET = int(os.environ.get("DEFAULT_SQUAT_TARGET", "10"))
-MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "50"))
+MAX_SESSION_SQUATS = int(os.environ.get("MAX_SESSION_SQUATS", "100"))
 POPUP_VERSION = "2026-07-12-live-progress-1"
 RIOT_CHECK_ENABLED = os.environ.get("RIOT_CHECK_ENABLED", "1") == "1"
 RIOT_CHECK_COMMAND = os.environ.get("RIOT_CHECK_COMMAND", f'"{sys.executable}" -m squat_capture.script')

@@ -111,3 +111,15 @@ class QueueTests(unittest.TestCase):
         self.s.record_count('camera:routing',3,run)
         self.assertEqual(self.s.snapshot()['owed_squats'],107)
         self.assertEqual(self.s.queue_snapshot()['items'][0]['done'],3)
+
+    def test_default_session_redemption_limit_is_one_hundred(self):
+        from squat_capture import twitch_eventsub_listener as listener
+        self.assertEqual(listener.MAX_SESSION_SQUATS,100)
+        state=listener.RedeemPopupState()
+        with patch.object(listener,'extract_squat_target',side_effect=[60,40,1]):
+            self.assertIsNotNone(state.publish({'reward_title':'first'})[0])
+            self.assertIsNotNone(state.publish({'reward_title':'second'})[0])
+            job,limit=state.publish({'reward_title':'over'})
+        self.assertIsNone(job)
+        self.assertEqual(limit['reason'],'session_squat_limit_reached')
+        self.assertEqual(limit['remaining_session_squats'],0)
