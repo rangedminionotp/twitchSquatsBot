@@ -249,6 +249,28 @@ class CloudTests(unittest.TestCase):
         self.assertIn('HttpOnly',session_headers[0]); self.assertIn('SameSite=Lax',session_headers[0])
         self.assertEqual(self.call(path,headers={'Cookie':cookie})[0],400)
 
+    def test_viewer_login_creates_limited_session(self):
+        status,_,headers = self.call('/viewer/login')
+        self.assertEqual(status,303)
+        state = parse_qs(urlsplit(dict(headers)['Location']).query)['state'][0]
+        oauth_cookie = dict(headers)['Set-Cookie'].split(';')[0]
+        status,_,headers = self.call('/auth/callback?code=test-code&state='+state,
+                                     headers={'Cookie':oauth_cookie})
+        self.assertEqual(status,303)
+        self.assertEqual(dict(headers)['Location'],'/viewer')
+        raw_session = next(value for key,value in headers if key == 'Set-Cookie' and value.startswith('sc_session='))
+        viewer_token = raw_session.split(';',1)[0].split('=',1)[1]
+        self.assertEqual(self.store.session(viewer_token)['role'],'viewer')
+        self.assertEqual(self.call('/api/me',token=viewer_token)[0],403)
+        self.assertEqual(self.call('/api/owed','POST',viewer_token,{'owed':10})[0],403)
+        self.assertEqual(self.call('/camera',token=viewer_token)[0],303)
+
+    def test_viewer_shell_is_public_and_camera_scoped(self):
+        status,body,headers = self.call('/viewer')
+        self.assertEqual(status,200)
+        self.assertIn(b'Video and pose landmarks are never uploaded',body)
+        self.assertIn('camera=(self)',dict(headers)['Permissions-Policy'])
+
     def test_profile_and_response_security_headers(self):
         status,body,headers = self.call('/api/me',token=self.a)
         self.assertEqual(status,200)

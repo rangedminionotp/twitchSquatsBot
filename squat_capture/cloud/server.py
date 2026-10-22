@@ -98,7 +98,7 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
             self.send_header('Referrer-Policy', 'no-referrer')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('X-Frame-Options', 'DENY')
-            camera_page = urlsplit(self.path).path == '/camera'
+            camera_page = urlsplit(self.path).path in ('/camera', '/viewer')
             model_host = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/'
             policy = (f"script-src 'self' 'wasm-unsafe-eval' {model_host}; connect-src 'self' {model_host} https://storage.googleapis.com/mediapipe-models/; media-src 'self' blob:; worker-src 'self' blob:; "
                       if camera_page else "script-src 'self'; connect-src 'self'; ")
@@ -119,7 +119,7 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 self.reply(400, {'error': 'Unexpected host'})
                 return False
             path=urlsplit(self.path).path
-            if path.startswith('/auth/') and not limiter.allow('auth',30):
+            if (path.startswith('/auth/') or path == '/viewer/login') and not limiter.allow('auth',30):
                 self.reply(429,{'error':'Too many login attempts. Wait a minute.'})
                 return False
             return True
@@ -135,15 +135,19 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                     self.reply(200,{'ok':True})
                 except Exception:self.reply(503,{'ok':False})
             elif path == '/auth/twitch':
-                state, binding = store.start_oauth()
+                state, binding = store.start_oauth('admin')
                 events = settings.enable_events and parse_qs(parsed.query).get('events') == ['1']
                 target = oauth.authorize_url(state, events=True) if events else oauth.authorize_url(state)
                 self.redirect(target, [self.cookie_header(state_cookie, binding, 600)])
+            elif path == '/viewer/login':
+                state, binding = store.start_oauth('viewer')
+                self.redirect(oauth.authorize_url(state), [self.cookie_header(state_cookie, binding, 600)])
             elif path == '/auth/callback':
                 query = parse_qs(parsed.query)
                 state = query.get('state', [''])[0]
                 clear = self.cookie_header(state_cookie, '', 0)
-                if not store.consume_oauth(state, self.cookie(state_cookie)):
+                purpose = store.consume_oauth(state, self.cookie(state_cookie))
+                if not purpose:
                     self.reply(400, {'error': 'Invalid or expired login. Start again.'}, headers=[clear])
                     return
                 if 'error' in query or not query.get('code'):
@@ -152,10 +156,10 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 try:
                     identity, tokens = oauth.exchange(query['code'][0])
                     allowed = {value.strip() for value in settings.allowed_users.split(',') if value.strip()}
-                    if not settings.development and identity['user_id'] not in allowed:
+                    if purpose == 'admin' and not settings.development and identity['user_id'] not in allowed:
                         self.reply(403,{'error':'This beta is invite-only. Ask the operator to allow your Twitch user ID.'},headers=[clear])
                         return
-                    token = store.login(identity, tokens)
+                    token = store.login(identity, tokens, role=purpose)
                     if token_service:
                         token_service.invalidate(identity['user_id'])
                 except Exception:
@@ -163,11 +167,15 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                     self.reply(502, {'error': 'Twitch login failed. Please retry.'}, headers=[clear])
                     return
                 store.logout(self.cookie(session_cookie))
-                self.redirect('/', [clear, self.cookie_header(session_cookie, token, SESSION_SECONDS)])
+                self.redirect('/viewer' if purpose == 'viewer' else '/',
+                              [clear, self.cookie_header(session_cookie, token, SESSION_SECONDS)])
             elif path == '/api/me':
                 session = store.session(self.cookie(session_cookie))
                 if not session:
                     self.reply(401, {'error': 'Login required'})
+                    return
+                if session['role'] != 'admin':
+                    self.reply(403, {'error': 'Broadcaster access required'})
                     return
                 self.reply(200, {'user': store.profile(session['user_id']), 'csrf': session['csrf'],
                                  'authorization': store.auth_health(session['user_id']),
@@ -183,6 +191,8 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 session = store.session(self.cookie(session_cookie))
                 if not session:
                     self.reply(401, {'error':'Login required'})
+                elif session['role'] != 'admin':
+                    self.reply(403, {'error':'Broadcaster access required'})
                 elif not twitch_data:
                     self.reply(503, {'error':'Twitch data service unavailable'})
                 else:
@@ -195,15 +205,21 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 if not session:
                     self.reply(401, {'error': 'Login required'})
                     return
+                if session['role'] != 'admin':
+                    self.reply(403, {'error': 'Broadcaster access required'})
+                    return
                 run_id = parse_qs(parsed.query).get('id', [''])[0]
                 with store.connection() as db:
                     run = challenges.snapshot(db, session['user_id'], run_id) if run_id else None
                 self.reply(200 if run else 404, {'run':run} if run else {'error':'Challenge not found'})
             elif path == '/camera':
-                if not store.session(self.cookie(session_cookie)):
+                session = store.session(self.cookie(session_cookie))
+                if not session or session['role'] != 'admin':
                     self.redirect('/')
                     return
                 self.reply(200, (STATIC / 'camera.html').read_bytes(), 'text/html; charset=utf-8')
+            elif path == '/viewer':
+                self.reply(200, (STATIC / 'viewer.html').read_bytes(), 'text/html; charset=utf-8')
             elif path in ('/assets/camera.js', '/assets/capture-core.mjs', '/assets/pose.mjs', '/assets/camera.css', '/assets/donations.js'):
                 name = path.removeprefix('/assets/')
                 mime = 'text/css' if name.endswith('.css') else 'text/javascript'
@@ -243,6 +259,9 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
             session = store.session(session_token)
             if not session:
                 self.reply(401, {'error': 'Login required'})
+                return
+            if session['role'] != 'admin':
+                self.reply(403, {'error': 'Broadcaster access required'})
                 return
             if not limiter.allow('write:'+session['user_id'],300):
                 self.reply(429,{'error':'Too many changes. Wait a minute.'})
