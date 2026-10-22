@@ -697,13 +697,21 @@ async function initPopupPage() {
       document.title='Squat Capture · Camera Overlay';
       document.body.dataset.cameraMode='webcam';
       const tools=document.createElement('div');tools.id='cameraTools';
-      const help=document.createElement('p');help.textContent='Release your camera in Streamlabs first. Start here, then window-capture this page. H toggles controls; keep this window open, not minimized.';
-      const hide=document.createElement('button');hide.textContent='Hide controls (H)';hide.onclick=()=>document.body.classList.add('clean');
-      tools.append(help,startButton,cameraSelectEl,refreshCamerasButton,hide,
-        document.getElementById('calibrationControls'),document.getElementById('detectionDetailsCard'));
-      document.body.append(tools);
+      const header=document.createElement('div');header.className='sidebar-header';
+      const heading=document.createElement('div');heading.className='sidebar-heading';
+      const title=document.createElement('strong');title.textContent='Squat Capture';
+      const subtitle=document.createElement('span');subtitle.textContent='Camera monitor';heading.append(title,subtitle);
+      const hide=document.createElement('button');hide.className='sidebar-close';hide.textContent='×';hide.title='Hide sidebar (H)';hide.setAttribute('aria-label','Hide camera controls sidebar');hide.onclick=()=>document.body.classList.add('clean');header.append(heading,hide);
+      const help=document.createElement('p');help.className='sidebar-help';help.textContent='Keep this window open and use Window Capture in OBS or Streamlabs.';
+      const cameraSection=document.createElement('section');cameraSection.className='camera-section';
+      const cameraTitle=document.createElement('strong');cameraTitle.className='section-title';cameraTitle.textContent='Camera';
+      const cameraActions=document.createElement('div');cameraActions.className='camera-actions';cameraActions.append(startButton,refreshCamerasButton);
+      cameraSection.append(cameraTitle,cameraSelectEl,cameraActions);
+      const show=document.createElement('button');show.id='cameraPanelToggle';show.textContent='Show controls';show.setAttribute('aria-label','Show camera controls sidebar');show.onclick=()=>document.body.classList.remove('clean');
+      tools.append(header,help,cameraSection,document.getElementById('calibrationControls'),document.getElementById('detectionDetailsCard'));
+      document.body.append(tools,show);
       const warning=document.createElement('div');warning.id='cameraWarning';document.body.append(warning);
-      const syncInfo=document.createElement('p');syncInfo.setAttribute('role','status');tools.append(syncInfo);
+      const syncInfo=document.createElement('p');syncInfo.className='sync-state';syncInfo.setAttribute('role','status');tools.append(syncInfo);
       recoverCamera();
       window.addEventListener('beforeunload',e=>{if(cameraPending.size){e.preventDefault();e.returnValue=''}});
       document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='h'&&!['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName))document.body.classList.toggle('clean')});
