@@ -25,6 +25,11 @@ created by this implementation.
 
 ## Run it locally
 
+On WSL, `bash scripts/start_cloud_wsl.sh` loads the ignored `.env.cloud` file.
+On its first run it prepares non-secret defaults, imports the broadcaster ID from
+the existing local app and generates a stable encryption key. It stops with the
+exact missing fields until a separate Twitch Confidential Web App is configured.
+
 1. Complete the cloud developer setup in [CLOUD.md](CLOUD.md), using a separate
    confidential Twitch application with this exact development redirect:
    `http://127.0.0.1:8090/auth/callback`.
