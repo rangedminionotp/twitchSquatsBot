@@ -13,6 +13,12 @@ IDENTITY_URL = "https://id.twitch.tv/oauth2"
 REDEMPTION_TYPE = "channel.channel_points_custom_reward_redemption.add"
 
 
+class TwitchHTTPError(RuntimeError):
+    def __init__(self, status, detail):
+        super().__init__(f"Twitch HTTP {status}: {detail}")
+        self.status = status
+
+
 def _request_json(url, method="GET", headers=None, data=None):
     body = None
     request_headers = dict(headers or {})
@@ -25,7 +31,7 @@ def _request_json(url, method="GET", headers=None, data=None):
             return json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Twitch HTTP {error.code}: {detail}") from error
+        raise TwitchHTTPError(error.code, detail) from error
 
 
 class TwitchService:
@@ -40,6 +46,8 @@ class TwitchService:
         self.auth_state = "idle"
         self.on_stream = on_stream
         self._stream_thread = None
+        self._refresh_lock = threading.Lock()
+        self.stream_health = {"state": "connecting", "message": "Checking Twitch live status"}
         self.listening_types = set()
 
     def health(self):
@@ -53,22 +61,43 @@ class TwitchService:
             ready = connected and all(kind in self.listening_types for kind in kinds)
             rows.append({"name": label, "state": "disabled" if not enabled else "ready" if ready else "attention",
                          "message": "Disabled" if not enabled else "Listening" if ready else "Not listening — check connection / reconnect Twitch"})
-        return {"connection": dict(self.status), "listeners": rows}
+        return {"connection": dict(self.status), "stream": dict(self.stream_health), "listeners": rows}
+
+    def _request_with_refresh(self, url):
+        """Retry an authenticated read once after atomically refreshing an expired token."""
+        attempted_token = self.config.get("twitch_access_token")
+        try:
+            return _request_json(url, headers=self.api_headers())
+        except TwitchHTTPError as error:
+            if error.status != 401:
+                raise
+            # The stream watcher and EventSub connection can discover expiry together.
+            # Only the first caller rotates the refresh token; later callers use its result.
+            with self._refresh_lock:
+                if self.config.get("twitch_access_token") == attempted_token:
+                    self.refresh_access_token()
+            return _request_json(url, headers=self.api_headers())
 
     def _watch_stream(self):
         while not self._stop.is_set():
             try:
                 user_id = self.config.get("broadcaster_id")
                 if not user_id or not self.config.get("twitch_access_token"):
+                    self.stream_health = {"state": "attention", "message": "Reconnect Twitch to track this stream's completed reps"}
                     self.on_stream(None, "unknown")
                 else:
-                    result = _request_json(API_URL + "/streams?" + urllib.parse.urlencode({"user_id": user_id}), headers=self.api_headers())
+                    result = self._request_with_refresh(API_URL + "/streams?" + urllib.parse.urlencode({"user_id": user_id}))
                     streams = result["data"]
                     # Ignore responses for an account that changed during the request.
                     if user_id == self.config.get("broadcaster_id"):
+                        self.stream_health = {"state": "ready", "message": "Live stream detected" if streams else "Channel is offline"}
                         self.on_stream(user_id + ":" + streams[0]["id"] if streams else None,
                                        "live" if streams else "offline")
-            except Exception:
+            except Exception as error:
+                message = ("Twitch authorization expired. Reconnect Twitch to resume the stream counter"
+                           if isinstance(error, TwitchHTTPError) and error.status in (400, 401)
+                           else "Could not verify Twitch live status. Retrying automatically")
+                self.stream_health = {"state": "attention", "message": message}
                 self.on_stream(None, "unknown")
             self._stop.wait(15)
 

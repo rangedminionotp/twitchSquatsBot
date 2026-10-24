@@ -15,6 +15,7 @@ const cases = [
   ['Ready', () => {}],
   ['Connecting', s => {s['/api/settings'].data.twitch.auth_state = 'pending';}],
   ['Twitch disconnected', s => {s['/api/settings'].data.twitch.state = 'disconnected';}],
+  ['Stream counter paused', s => {s['/api/diagnostics'].data.health.stream = {state:'attention',message:'Reconnect Twitch'};}],
   ['Choose triggers', s => {s['/api/settings'].data.settings = {};}],
   ['Not listening', s => {s['/api/diagnostics'].data.health.listeners = [];}],
   ['Open camera', s => {s['/api/camera'].data.page_connected = false;}],
@@ -54,7 +55,7 @@ assert.equal(deriveAccount(accountEntry({broadcaster_login: 'streamer'}), null, 
 assert.equal(deriveAccount(accountEntry({twitch_access_token: 'configured'}), null, 1000).action, 'Reconnect Twitch');
 assert.equal(deriveAccount(accountEntry({}, {state: 'authorizing', auth_state: 'pending'}), null, 1000).kind, 'pending');
 const connected = accountEntry({broadcaster_login: 'streamer', target_reward_id: 'a'}, {state: 'connected'});
-const listening = {health: {listeners: [{name: 'Channel Points', state: 'ready'}]}};
+const listening = {health: {stream:{state:'ready'},listeners: [{name: 'Channel Points', state: 'ready'}]}};
 assert.equal(deriveAccount(connected, listening, 1000).label, 'Twitch connected as streamer');
 assert.equal(deriveAccount(connected, null, 1000).action, 'Manage Twitch connection');
 assert.equal(deriveAccount(connected, {health: {listeners: [{name: 'Channel Points', state: 'attention'}]}}, 1000).action, 'Review Twitch permissions');
@@ -64,6 +65,7 @@ assert.equal(deriveAccount(connected, null, 1000).listening, false);
 assert.equal(deriveAccount(connected, listening, 1000).listening, true);
 assert.equal(deriveAccount(connected, {health: {listeners: []}}, 1000).kind, 'review');
 assert.equal(deriveAccount(connected, {health: {listeners: [{name: 'Channel Points', state: 'disabled'}]}}, 1000).listening, false);
+assert.equal(deriveAccount(connected, {health: {stream:{state:'attention'},listeners: [{name: 'Channel Points', state: 'ready'}]}}, 1000).kind, 'review');
 const subAccount = accountEntry({subs_enabled: '1'}, {state: 'connected'});
 assert.equal(deriveAccount(subAccount, listening, 1000).kind, 'review');
 console.log('5 listener-status assertions passed');

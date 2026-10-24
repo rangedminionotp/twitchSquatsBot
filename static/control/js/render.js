@@ -67,6 +67,7 @@ export function renderConnectionHealth(parent, health, providers = {}) {
     if (targetId && targetId === focusedTarget) line.focus({preventScroll:true});
   }
   row('Twitch', health.connection.state, health.connection.message);
+  if (health.stream) row('Stream counter', health.stream.state, health.stream.message);
   for (const item of health.listeners) row(item.name, item.state, item.message);
   for (const [name,state] of Object.entries(providers)) row({streamlabs:'Streamlabs',streamelements:'StreamElements'}[name] || name,state,state);
 }

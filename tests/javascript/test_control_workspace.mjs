@@ -59,19 +59,21 @@ function node() { return {children:[],dataset:{},textContent:'',append(...childr
 globalThis.document={createElement:node};
 try {
   const parent=node();
-  renderConnectionHealth(parent,{connection:{state:'connected',message:'Listening for events'},listeners:[
+  renderConnectionHealth(parent,{connection:{state:'connected',message:'Listening for events'},stream:{state:'attention',message:'Reconnect Twitch'},listeners:[
     {name:'Channel Points',state:'ready',message:'Listening'},
     {name:'Subs / gifts',state:'attention',message:'Missing permission; reconnect'},
     {name:'Bits',state:'disabled',message:'Disabled'}
   ]},{streamlabs:'Disabled',streamelements:'Connection failed <error>'});
-  assert.equal(parent.children.length,6);
+  assert.equal(parent.children.length,7);
   assert.equal(parent.children[0].children[1].textContent,'Connected');
   assert.equal(parent.children[0].children.length,2);
-  assert.equal(parent.children[1].children[1].dataset.tone,'good');
-  assert.equal(parent.children[2].children[2].textContent,'Missing permission; reconnect');
-  assert.equal(parent.children[3].children[1].dataset.tone,'muted');
-  assert.equal(parent.children[4].children[0].textContent,'Streamlabs');
-  assert.equal(parent.children[5].children[2].textContent,'Connection failed <error>');
+  assert.equal(parent.children[1].children[1].dataset.tone,'warning');
+  assert.equal(parent.children[1].children[2].textContent,'Reconnect Twitch');
+  assert.equal(parent.children[2].children[1].dataset.tone,'good');
+  assert.equal(parent.children[3].children[2].textContent,'Missing permission; reconnect');
+  assert.equal(parent.children[4].children[1].dataset.tone,'muted');
+  assert.equal(parent.children[5].children[0].textContent,'Streamlabs');
+  assert.equal(parent.children[6].children[2].textContent,'Connection failed <error>');
   renderConnectionHealth(parent,{connection:{state:'disconnected',message:'Reconnect Twitch'},listeners:[]});
   assert.equal(parent.children.length,1);
   assert.equal(parent.children[0].children[1].dataset.tone,'warning');

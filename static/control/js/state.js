@@ -28,7 +28,8 @@ export function deriveAccount(entry, diagnostics, now = Date.now()) {
   const required = ['Channel Points', settings.subs_enabled === '1' && 'Subs / gifts', settings.bits_enabled === '1' && 'Bits'].filter(Boolean);
   const rows = diagnostics?.health?.listeners;
   const listening = connected && Array.isArray(rows) && required.every(name => rows.some(row => row.name === name && row.state === 'ready'));
-  const review = connected && Array.isArray(rows) && !listening;
+  const streamReady = diagnostics?.health?.stream?.state !== 'attention';
+  const review = connected && Array.isArray(rows) && (!listening || !streamReady);
   return {
     kind: pending ? 'pending' : connected ? (review ? 'review' : 'connected') : known ? 'interrupted' : 'new',
     known, connected, listening, name,
@@ -83,6 +84,7 @@ export function deriveStatus(entries, now = Date.now()) {
   const queue = entries['/api/queue'].data;
   if (account.twitch.auth_state === 'pending' || account.twitch.state === 'connecting') return result('Connecting', 'Complete Twitch authorization in the browser.', 'login');
   if (account.twitch.state !== 'connected') return result('Twitch disconnected', account.twitch.message || 'Connect or reconnect your Twitch account.', 'login');
+  if (diagnostics.health?.stream?.state === 'attention') return result('Stream counter paused', diagnostics.health.stream.message, 'healthRefresh');
   const triggers = selectedTriggers(account.settings, diagnostics);
   if (!triggers.selected) return result('Choose triggers', 'Select a Channel Points reward or enable an auto-add rule.', 'reward');
   if (!triggers.ready) return result('Not listening', triggers.missing.join(', ') + ': check connection and permissions in Settings.', 'healthRefresh');

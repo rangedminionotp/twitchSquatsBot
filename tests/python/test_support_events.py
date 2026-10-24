@@ -177,6 +177,20 @@ class SupportTests(unittest.TestCase):
         service.listening_types.discard("channel.subscription.gift")
         self.assertEqual(service.health()["listeners"][1]["state"], "attention")
 
+    def test_stream_read_refreshes_an_expired_token_once(self):
+        from squat_capture.twitch_eventsub_websocket import TwitchService, TwitchHTTPError
+        self.config.update_tokens("expired", "refresh-one")
+        service = TwitchService(self.config, lambda _: None)
+        responses = [TwitchHTTPError(401, "expired"),
+                     {"access_token": "fresh", "refresh_token": "refresh-two"},
+                     {"data": [{"id": "stream"}]}]
+        with patch("squat_capture.twitch_eventsub_websocket._request_json", side_effect=responses) as request:
+            result = service._request_with_refresh("https://api.twitch.tv/helix/streams")
+        self.assertEqual(result["data"][0]["id"], "stream")
+        self.assertEqual(self.config.get("twitch_access_token"), "fresh")
+        self.assertEqual(self.config.get("twitch_refresh_token"), "refresh-two")
+        self.assertEqual(request.call_count, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
