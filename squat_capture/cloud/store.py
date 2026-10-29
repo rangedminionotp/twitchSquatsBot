@@ -40,8 +40,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS rules (
                     user_id TEXT PRIMARY KEY REFERENCES users(id),
                     reward_id TEXT NOT NULL DEFAULT '', reward_reps INTEGER NOT NULL DEFAULT 10,
-                    sub_reps INTEGER NOT NULL DEFAULT 0, gift_reps INTEGER NOT NULL DEFAULT 0,
-                    bits_unit INTEGER NOT NULL DEFAULT 100, bits_reps INTEGER NOT NULL DEFAULT 0);
+                    sub_reps INTEGER NOT NULL DEFAULT 5, gift_reps INTEGER NOT NULL DEFAULT 5,
+                    bits_unit INTEGER NOT NULL DEFAULT 500, bits_reps INTEGER NOT NULL DEFAULT 10,
+                    bits_bundle_unit INTEGER NOT NULL DEFAULT 1000,
+                    bits_bundle_reps INTEGER NOT NULL DEFAULT 30);
                 CREATE TABLE IF NOT EXISTS event_receipts (
                     user_id TEXT NOT NULL REFERENCES users(id), event_key TEXT NOT NULL,
                     kind TEXT NOT NULL, amount INTEGER NOT NULL, created REAL NOT NULL,

@@ -209,20 +209,20 @@ at receipt, not historical stream attribution.
 
 ## 5. Sub, Bits and donation rules
 
-All sources are optional and initially disabled. Save each source's rate before testing.
+Sub and Bits start with the stream schedule below; donation sources remain disabled.
+Save the rules and reconnect Twitch if the added permissions have not been granted yet.
 
 For subscription-only owed accrual, open **Integrations → Auto-add squats**, enable
 Twitch subs and disable Bits, Streamlabs and StreamElements, then save. Set the
 per-sub amount as desired; gifts count per subscription. Channel Points only queue
 the next set, and completing challenge reps still reduces existing owed.
 
-- **Twitch subs:** new and gifted subscriptions; a gift bundle counts each gift once.
+- **Twitch subs:** new and gifted subscriptions add 5 owed squats each; a gift bundle counts each gift once.
   Automatic renewals / resub chat messages are not counted.
-- **Bits:** whole configured units per event. For example, 100 Bits → 3 reps means
-  250 Bits adds 6, not 7.5.
+- **Bits:** whole configured units per event. Amounts below the 500-Bit base unit add 0.
   Optional **Large Cheer bundle**: count full bundles first, then remaining Bits
-  at the base rate. Base 100 → 1 plus bundle 1000 → 15 gives 500 → 5, 1200 → 17,
-  and 2000 → 30. Two separate 500-Bit Cheers still add 5 each. Remainders do not
+  at the base rate. The default base 500 → 10 plus bundle 1000 → 30 gives
+  500 → 10, 1000 → 30, 1500 → 40, and 2000 → 60. Remainders do not
   carry between events. A bundle size must be a larger multiple of the base unit.
 - **Streamlabs / StreamElements:** separate amount, currency and rep settings.
   USD 2.50 → 4 reps means USD 5.01 adds 8. Remainders are discarded per event.

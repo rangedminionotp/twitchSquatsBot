@@ -21,6 +21,19 @@ class SupportTests(unittest.TestCase):
         self.env.stop()
         self.temp.cleanup()
 
+    def test_stream_support_defaults_match_requested_schedule(self):
+        self.assertEqual(self.config.get('subs_enabled'),'1')
+        self.assertEqual(self.config.get('subs_squats'),'5')
+        self.assertEqual(self.config.get('bits_enabled'),'1')
+        self.assertEqual(self.config.get('bits_unit'),'500')
+        self.assertEqual(self.config.get('bits_squats'),'10')
+        self.assertEqual(self.config.get('bits_bundle_enabled'),'1')
+        self.assertEqual(self.config.get('bits_bundle_unit'),'1000')
+        self.assertEqual(self.config.get('bits_bundle_squats'),'30')
+        for amount,expected in ((499,0),(500,10),(999,10),(1000,30),(1499,30),(1500,40),(2000,60)):
+            with self.subTest(amount=amount):
+                self.assertEqual(self.service.preview('bits',amount)['delta'],expected)
+
     def test_opt_in_and_independent_rules(self):
         self.service.add("bits", "disabled", 100)
         self.assertEqual(self.stats.snapshot()["owed_squats"], 0)
@@ -107,7 +120,7 @@ class SupportTests(unittest.TestCase):
                             ("channel.subscribe", {"is_gift": False})]:
             self.service.twitch({"subscription": {"type": kind}, "message_id": kind,
                                  "event": {"broadcaster_user_id": "owner", **event}})
-        self.assertEqual(self.stats.snapshot()["owed_squats"], 11)
+        self.assertEqual(self.stats.snapshot()["owed_squats"], 55)
 
     def test_provider_payloads(self):
         self.config.update({"streamlabs_enabled": "1", "streamelements_enabled": "1", "streamelements_channel": "room"})
@@ -122,6 +135,7 @@ class SupportTests(unittest.TestCase):
         self.assertEqual(self.stats.snapshot()["owed_squats"], 7)
 
     def test_invalid_settings_are_atomic_and_tokens_masked(self):
+        self.config.update({"subs_enabled":"0"})
         for value in ("NaN", "Infinity", "-1", "0", "1.5"):
             with self.assertRaises(ValueError):
                 self.config.update({"subs_enabled": "1", "subs_squats": value})
@@ -161,7 +175,7 @@ class SupportTests(unittest.TestCase):
         self.service.add("subs", "secret-event-id")
         restored = PersistentStats()
         self.assertEqual(len(restored.activity()), 1)
-        self.assertEqual(restored.activity()[0]["amount"], 1)
+        self.assertEqual(restored.activity()[0]["amount"], 5)
         self.assertNotIn("secret-event-id", str(restored.activity()))
         self.assertEqual(self.service.diagnostics()[0]["reason"], "Ignored: duplicate event")
 

@@ -26,7 +26,8 @@ class SubscriptionTests(unittest.TestCase):
         self.store = Store(Path(self.tmp.name)/'cloud.sqlite3', self.key)
         for uid in ('11','22'):
             self.store.login({'user_id':uid,'login':'test'+uid}, {'access_token':'fake','scopes':list(SCOPES.values())})
-        self.rules = {**self.store.rules('11'), 'sub_reps':5}
+        self.rules = {**self.store.rules('11'), 'sub_reps':5, 'gift_reps':0,
+                      'bits_reps':0, 'bits_bundle_reps':0}
         self.store.save_rules('11',self.rules)
         self.store.enable_listener('11',True)
         self.callback = 'https://example.test/eventsub'

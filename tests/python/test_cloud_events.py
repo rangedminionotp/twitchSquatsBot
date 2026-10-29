@@ -38,6 +38,19 @@ class CloudEventTests(unittest.TestCase):
             self.store.expect_subscription('11',kind,'https://example.test/eventsub')
             self.store.save_subscription('11',kind,'sub-'+kind,'enabled')
 
+    def test_new_cloud_accounts_use_stream_support_schedule(self):
+        rules = self.store.rules('22')
+        self.assertEqual({key:rules[key] for key in ('sub_reps','gift_reps','bits_unit','bits_reps',
+                                                     'bits_bundle_unit','bits_bundle_reps')},
+                         {'sub_reps':5,'gift_reps':5,'bits_unit':500,'bits_reps':10,
+                          'bits_bundle_unit':1000,'bits_bundle_reps':30})
+        total = 0
+        for amount,expected in ((499,0),(500,10),(999,10),(1000,30),(1500,40),(2000,60)):
+            self.store.receive_event('22','channel.cheer',str(amount),
+                                     {'broadcaster_user_id':'22','bits':amount})
+            total += expected
+            self.assertEqual(self.store.profile('22')['owed'],total)
+
     def signed(self, kind, event, mid='m1', uid='11', message_type='notification', stamp=None):
         body = {'subscription':{'id':'sub-'+kind,'type':kind,'version':'1','condition':{'broadcaster_user_id':uid},'transport':{'method':'webhook','callback':'https://example.test/eventsub'}},'event':event,'challenge':'challenge-value'}
         raw = json.dumps(body).encode()
@@ -141,6 +154,7 @@ class CloudEventTests(unittest.TestCase):
         self.assertEqual(self.deliver('channel.subscribe',{},message_type='webhook_callback_verification'),(200,b'challenge-value'))
 
     def test_disabled_unmatched_and_invalid_rules(self):
+        self.store.save_rules('22',{**self.store.rules('22'),'sub_reps':0,'gift_reps':0,'bits_reps':0})
         self.assertEqual(self.store.rules('22')['sub_reps'],0)
         other = self.redemption(); other['reward']['id']='unmatched'
         self.deliver('channel.channel_points_custom_reward_redemption.add',other)

@@ -9,8 +9,9 @@ SOURCES = ("subs", "bits", "streamlabs", "streamelements")
 SUPPORT_DEFAULTS = {}
 for source in SOURCES:
     SUPPORT_DEFAULTS.update({source + "_enabled": "0", source + "_squats": "1"})
-SUPPORT_DEFAULTS.update({"bits_unit": "100", "streamlabs_unit": "1",
-    "bits_bundle_enabled": "0", "bits_bundle_unit": "1000", "bits_bundle_squats": "15",
+SUPPORT_DEFAULTS.update({"subs_enabled": "1", "subs_squats": "5",
+    "bits_enabled": "1", "bits_unit": "500", "bits_squats": "10", "streamlabs_unit": "1",
+    "bits_bundle_enabled": "1", "bits_bundle_unit": "1000", "bits_bundle_squats": "30",
     "streamelements_unit": "1", "streamlabs_currency": "USD",
     "streamelements_currency": "USD", "streamlabs_token": "",
     "streamelements_token": "", "streamelements_channel": ""})
@@ -90,7 +91,7 @@ class SupportService:
             if source == 'bits':
                 delta = bits_squats(amount, unit, self.config.get('bits_squats'),
                     self.config.get('bits_bundle_unit', '1000'),
-                    self.config.get('bits_bundle_squats', '15') if self.config.get('bits_bundle_enabled') == '1' else 0)
+                    self.config.get('bits_bundle_squats', '30') if self.config.get('bits_bundle_enabled') == '1' else 0)
         except (ValueError, InvalidOperation, ZeroDivisionError):
             raise ValueError("Invalid amount or saved rule") from None
         return {"delta": delta, "reason": "Would add to owed" if delta else "Below one configured unit"}
