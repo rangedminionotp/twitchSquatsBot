@@ -93,6 +93,18 @@ def inspect_environment(environ=None, platform=None):
     else:
         checks.append(('WARN','database bootstrap','Database will be created on first successful start'))
 
+    backup_directory = Path(env.get('CLOUD_BACKUP_DIRECTORY',''))
+    add(backup_directory.is_absolute() and backup_directory.is_dir(),'backup directory',
+        'Existing absolute directory is required for the daily backup timer')
+    if backup_directory.is_absolute() and backup_directory.is_dir() and platform == 'posix':
+        add(stat.S_IMODE(backup_directory.stat().st_mode) & 0o077 == 0,'backup directory permissions',
+            'Group/other access must be disabled (mode 0700)')
+    try:
+        retention = int(env.get('CLOUD_BACKUP_RETENTION_DAYS','7'))
+    except ValueError:
+        retention = 0
+    add(2 <= retention <= 90,'backup retention','Retention must be between 2 and 90 days')
+
     add(not settings.enable_events or bool(settings.eventsub_secret),'EventSub secret',
         'EventSub disabled for Viewer beta' if not settings.enable_events else 'Configured (value hidden)')
     return checks

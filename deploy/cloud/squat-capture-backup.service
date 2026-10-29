@@ -1,0 +1,20 @@
+[Unit]
+Description=Squat Capture integrity-checked SQLite backup
+
+[Service]
+Type=oneshot
+User=squatcapture
+Group=squatcapture
+WorkingDirectory=/opt/squat-capture
+EnvironmentFile=/etc/squat-capture/cloud.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/squat-capture/.venv/bin/python -m squat_capture.cloud.backup_job
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/squat-capture
+ReadWritePaths=/var/backups/squat-capture
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=256M

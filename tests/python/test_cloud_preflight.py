@@ -10,11 +10,13 @@ from squat_capture.cloud.preflight import inspect_environment
 
 class CloudPreflightTests(unittest.TestCase):
     def environment(self, root):
+        backup = root/'backups';backup.mkdir(mode=0o700)
         return {
             'CLOUD_DEV':'0','CLOUD_ORIGIN':'https://squats.example.com','CLOUD_PORT':'8090',
             'CLOUD_TWITCH_CLIENT_ID':'real-client-id','CLOUD_TWITCH_CLIENT_SECRET':'real-client-secret',
             'CLOUD_ENCRYPTION_KEY':Fernet.generate_key().decode(),
             'CLOUD_DATABASE':str(root/'cloud.sqlite3'),'CLOUD_ENABLE_EVENTS':'0',
+            'CLOUD_BACKUP_DIRECTORY':str(backup),'CLOUD_BACKUP_RETENTION_DAYS':'7',
             'CLOUD_ALLOWED_USERS':'11,22','CLOUD_COMMUNITY_OWNER_ID':'11',
             'CLOUD_COMMUNITY_TIMEZONE':'America/Los_Angeles'}
 

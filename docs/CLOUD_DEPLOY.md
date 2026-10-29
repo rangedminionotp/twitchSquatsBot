@@ -28,6 +28,9 @@ Use a domain/subdomain with HTTPS, not a public tunnel to the existing local app
    `/etc/squat-capture/cloud.env`, root-owned mode 600. Use `.env.cloud.example` as
    a template, with `CLOUD_DATABASE=/var/lib/squat-capture/cloud.sqlite3`,
    `CLOUD_DEV=0`, and `CLOUD_ORIGIN=https://YOUR_HOST` (no trailing slash).
+   Also create `/var/backups/squat-capture`, owned by `squatcapture`, mode 700, and
+   set `CLOUD_BACKUP_DIRECTORY=/var/backups/squat-capture` plus
+   `CLOUD_BACKUP_RETENTION_DAYS=7`.
 4. Generate and retain a stable Fernet key separately from backups. Supply the
    confidential Twitch client ID/secret and a random EventSub secret. Never place
    secrets in Git, shell history, browser screenshots or support tickets.
@@ -63,6 +66,12 @@ monitor health, service restarts, resource usage and coarse error counts instead
 - Back up SQLite with its backup API (not by copying a live partially-written file).
   Use `python -m squat_capture.cloud.backup /absolute/new-backup.sqlite3` with the
   service environment supplied. The command refuses to overwrite an existing file.
+- Install `deploy/cloud/squat-capture-backup.service` and `.timer`, then enable the
+  timer with `systemctl enable --now squat-capture-backup.timer`. Test immediately
+  with `systemctl start squat-capture-backup.service`; inspect its journal and open
+  the new snapshot with `PRAGMA integrity_check` before relying on the schedule.
+  The job removes only its own `cloud-YYYYMMDDTHHMMSSZ.sqlite3` files older than the
+  configured 2-90 day retention and never follows symlinks.
 - Backups contain personal records and encrypted tokens. Encrypt off-host backups,
   restrict access and adopt a documented short retention (for example seven days).
   The operator must implement retention/off-site copies; they are not automated here.

@@ -11,6 +11,7 @@ if Fernet:
     from squat_capture.cloud.donations import Donations
     from squat_capture.cloud.http_safety import RateLimiter
     from squat_capture.cloud.backup import backup
+    from squat_capture.cloud.backup_job import run_backup
 
 
 @unittest.skipUnless(Fernet,'Install cloud requirements')
@@ -50,6 +51,21 @@ class CloudSafetyTests(unittest.TestCase):
         self.assertEqual(restored.profile('11')['owed'],42)
         with self.assertRaises(FileExistsError):backup(self.store.path,target)
         with self.assertRaises(ValueError):backup(self.store.path,self.store.path)
+
+    def test_daily_backup_removes_only_expired_matching_snapshots(self):
+        backups=self.path/'backups';backups.mkdir()
+        now=1_800_000_000
+        old=backups/'cloud-20200101T000000Z.sqlite3';old.write_bytes(b'old')
+        unrelated=backups/'notes.txt';unrelated.write_text('keep')
+        import os
+        os.utime(old,(now-8*24*60*60,now-8*24*60*60))
+        destination,removed=run_backup(self.store.path,backups,7,now)
+        self.assertTrue(destination.is_file())
+        self.assertEqual(removed,[old.name])
+        self.assertFalse(old.exists());self.assertTrue(unrelated.exists())
+        restored=Store(destination,self.key)
+        self.assertEqual(restored.profile('11')['login'],'alice')
+        with self.assertRaises(ValueError):run_backup(self.store.path,backups,1,now+1)
 
     def test_rate_limits_reset_and_have_bounded_memory(self):
         now=[0];limiter=RateLimiter(clock=lambda:now[0])
