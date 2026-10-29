@@ -47,3 +47,33 @@ body.clean #cameraTools{display:none}body.clean #cameraPanelToggle{display:block
 #cameraWarning{position:fixed;bottom:10px;left:12px;z-index:21;max-width:80%;background:#17121bef;color:#ffb4b4;white-space:pre-wrap;font:13px system-ui}
 
 @media(max-width:480px){#cameraTools{inset:8px auto 8px 8px;width:min(328px,calc(100vw - 16px));border-radius:16px}.sidebar-header{padding:13px}.camera-section,#cameraTools .detection-details{padding:14px}.calibration-controls{align-items:flex-start;flex-wrap:wrap}#cameraPanelToggle{top:10px;left:10px}}
+
+/* Broadcast presentation: the camera is a framed overlay on a transparent canvas. */
+html,body{background:transparent!important}
+.stage{position:fixed!important;inset:16px!important;width:auto!important;height:auto!important;min-height:0!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:22px!important;background:linear-gradient(145deg,#0d1521,#070b12)!important;box-shadow:0 20px 70px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.035)!important}
+.stage::after{content:"";position:absolute;z-index:8;top:0;left:24px;right:24px;height:2px;background:linear-gradient(90deg,#68efd0,rgba(104,239,208,.22),transparent);pointer-events:none}
+#video,#overlayCanvas{border-radius:inherit}
+body[data-camera-mode="capture"] .stage>.overlay{padding:18px!important;background:linear-gradient(to bottom,rgba(4,8,14,.62),transparent 25%,transparent 62%,rgba(4,8,14,.78))!important}
+.stage>.overlay .overlay-top{align-items:flex-start;gap:12px;width:100%}
+.camera-brand{display:flex;align-items:center;gap:10px;flex:0 0 auto;padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(13,20,32,.82);box-shadow:0 8px 28px rgba(0,0,0,.24);backdrop-filter:blur(12px)}
+.camera-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:rgba(104,239,208,.10);color:#68efd0}
+.camera-brand-mark svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-brand>span:last-child{display:flex;flex-direction:column;gap:3px}
+.camera-brand strong{font:750 13px/1 Inter,"Segoe UI",sans-serif;letter-spacing:-.01em}
+.camera-brand small{color:#8d9eb6;font:600 8px/1 Inter,"Segoe UI",sans-serif;letter-spacing:.15em}
+.stage>.overlay .banner{align-self:auto;max-width:min(58%,520px);padding:10px 13px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(13,20,32,.78);box-shadow:0 8px 28px rgba(0,0,0,.2);color:#e8eef7;font:600 12px/1.35 Inter,"Segoe UI",sans-serif;text-align:right;backdrop-filter:blur(12px);overflow-wrap:anywhere}
+.stage>.overlay .meter{align-items:flex-end}
+.stage>.overlay .meter>div:first-child{min-width:148px;padding:12px 14px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(13,20,32,.84);box-shadow:0 8px 28px rgba(0,0,0,.24);backdrop-filter:blur(12px)}
+.stage>.overlay .count{font:750 52px/.9 Inter,"Segoe UI",sans-serif;letter-spacing:-.05em;font-variant-numeric:tabular-nums}
+.stage>.overlay .target{margin:8px 0 0;color:#9cacbf;font:500 11px/1.2 Inter,"Segoe UI",sans-serif}
+.stage>.overlay .pill-row{justify-content:flex-end}
+.stage>.overlay .pill{padding:7px 10px;border-color:rgba(104,239,208,.25);background:rgba(13,20,32,.84);box-shadow:0 8px 28px rgba(0,0,0,.2);color:#c9f8ed;font:650 10px/1 Inter,"Segoe UI",sans-serif;backdrop-filter:blur(12px)}
+.stage>.overlay .pill.warn{border-color:rgba(255,179,107,.32);color:#ffd09d}
+.stage>.overlay .pill.bad{border-color:rgba(255,107,138,.32);color:#ffb0c1}
+#cameraPanelToggle{top:24px;left:24px}
+body.clean #cameraPanelToggle{opacity:0;transition:opacity 140ms ease,transform 120ms ease,filter 120ms ease}
+body.clean #cameraPanelToggle:hover,body.clean #cameraPanelToggle:focus-visible{opacity:1}
+
+@media(max-width:640px){.stage{inset:8px!important;border-radius:16px!important}.stage>.overlay{padding:10px!important}.camera-brand{padding:6px 8px}.camera-brand-mark{width:28px;height:28px}.camera-brand strong{font-size:11px}.camera-brand small{font-size:7px}.stage>.overlay .banner{max-width:52%;padding:8px 10px;font-size:10px}.stage>.overlay .meter>div:first-child{min-width:118px;padding:10px 11px}.stage>.overlay .count{font-size:40px}.stage>.overlay .pill{padding:6px 8px;font-size:9px}}
+@media(max-width:480px){#cameraPanelToggle{top:16px;left:16px}.camera-brand small{display:none}.stage>.overlay .banner{display:none}.stage>.overlay .meter{gap:8px}.stage>.overlay .pill-row{gap:6px}}
+@media(prefers-reduced-motion:reduce){#cameraPanelToggle{transition:none!important}}

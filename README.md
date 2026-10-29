@@ -93,7 +93,8 @@ Keep the terminal running. Open:
 | Page | URL | Purpose |
 |---|---|---|
 | Control panel | http://127.0.0.1:8080/control | Settings, queue, modes and diagnostics |
-| Camera window | http://127.0.0.1:8080/camera-overlay | Regular browser window captured by Streamlabs |
+| Camera overlay | http://127.0.0.1:8080/camera-overlay | Framed transparent-layout browser window captured by Streamlabs |
+| Clean camera overlay | http://127.0.0.1:8080/camera-overlay?clean=1 | Same camera frame with controls hidden on load |
 | Counter overlay | http://127.0.0.1:8080/overlay | OBS/Streamlabs Browser Source |
 
 If you override the `PORT` environment variable, update all three URLs.

@@ -40,6 +40,12 @@ class ControlPanelTests(unittest.TestCase):
         ids = re.findall(r'\bid="([^"]+)"', CONTROL_HTML)
         self.assertEqual(len(ids), len(set(ids)))
 
+    def test_camera_surface_uses_overlay_frame(self):
+        camera_css = (STATIC_ROOT / 'capture/camera.css').read_text(encoding='utf-8')
+        self.assertIn('background:transparent!important', camera_css)
+        self.assertIn('class="camera-brand"', POPUP_HTML)
+        self.assertIn('body.clean #cameraPanelToggle:hover', camera_css)
+
     def test_assets_and_imports_are_shipped(self):
         for url, (relative, mime) in ASSETS.items():
             body, actual_mime = static_asset(url)

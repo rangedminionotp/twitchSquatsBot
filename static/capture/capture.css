@@ -56,6 +56,13 @@
       padding: 24px;
       background: linear-gradient(to bottom, rgba(0, 0, 0, 0.36), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.5));
     }
+    .overlay-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .camera-brand { display: none; }
     .banner {
       align-self: flex-start;
       max-width: 70%;

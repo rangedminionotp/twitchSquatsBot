@@ -8,6 +8,8 @@ async function initPopupPage() {
     const squatCompletePath = config.squatCompletePath;
     const defaultSquatTarget = Number(config.defaultSquatTarget) || 10;
     const isCameraOverlay = ['/camera-overlay', '/capture', '/capture/'].includes(location.pathname);
+    const startsClean = isCameraOverlay && /(?:^|[?&])clean=1(?:&|$)/.test(location.search || '');
+    if (isCameraOverlay) document.title = 'Squat Capture Camera Overlay';
     let cameraMode = 'webcam';
     let cameraModeBusy = false;
     let queueTicket = null;
@@ -710,6 +712,7 @@ async function initPopupPage() {
       const show=document.createElement('button');show.id='cameraPanelToggle';show.textContent='Show controls';show.setAttribute('aria-label','Show camera controls sidebar');show.onclick=()=>document.body.classList.remove('clean');
       tools.append(header,help,cameraSection,document.getElementById('calibrationControls'),document.getElementById('detectionDetailsCard'));
       document.body.append(tools,show);
+      if(startsClean) document.body.classList.add('clean');
       const warning=document.createElement('div');warning.id='cameraWarning';document.body.append(warning);
       const syncInfo=document.createElement('p');syncInfo.className='sync-state';syncInfo.setAttribute('role','status');tools.append(syncInfo);
       recoverCamera();
