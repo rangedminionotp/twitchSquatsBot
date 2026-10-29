@@ -66,13 +66,13 @@ function renderDetector(result, angle=null) {
 async function identity() {
   try {
     const data=await request('/api/viewer'); csrf=data.csrf;
-    $('account').textContent=`${data.user.login} · signed in`; $('logout').hidden=false; $('loginPanel').hidden=true;
+    $('account').textContent=`${data.user.login} · signed in`; $('logout').hidden=false; $('deleteData').hidden=false; $('loginPanel').hidden=true;
     run=data.community.run; renderCommunity(data.community);
     if (run) { $('runCount').textContent=run.accepted; $('runTarget').textContent=`/ ${run.target}`; }
     status('Camera processing is local. Nothing is counted until calibration succeeds.');
   } catch (error) {
     if (error.status!==401) throw error;
-    csrf=''; $('account').textContent='Guest'; $('logout').hidden=true; $('loginPanel').hidden=false;
+    csrf=''; $('account').textContent='Guest'; $('logout').hidden=true; $('deleteData').hidden=true; $('loginPanel').hidden=false;
     try { const data=await request('/api/community'); $('channel').textContent=data.channel; $('communityTotal').textContent=format(data.community_total); }
     catch { $('communityTotal').textContent='—'; }
     status('Sign in with Twitch to contribute.');
@@ -175,6 +175,10 @@ $('stopCamera').onclick=stopCamera;
 $('calibrate').onclick=()=>action(beginCalibration);
 $('retry').onclick=()=>action(async()=>{if(!pending)return;await sendProgress(pending);});
 $('logout').onclick=()=>action(async()=>{await request('/api/logout',{});stopCamera();location.reload();});
+$('deleteData').onclick=()=>action(async()=>{
+  if (!confirm('Delete your Community Squats viewer account, calibration history, flags, and contributions? Your accepted reps will be removed from the community total. This cannot be undone.')) return;
+  await request('/api/viewer/delete',{confirm:'DELETE'}); stopCamera(); location.assign('/viewer');
+});
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&mode==='tracking'){setMode('paused');status('Counting paused while this tab is hidden. Recalibrate to continue.',true);}});
 window.addEventListener('pagehide',()=>stream?.getTracks().forEach(track=>track.stop()));
 

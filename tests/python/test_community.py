@@ -116,6 +116,26 @@ class CommunityTests(unittest.TestCase):
         with self.assertRaises(CommunityConflict):
             self.community.revoke('22',1)
 
+    def test_viewer_deletion_reconciles_total_and_preserves_broadcaster_accounts(self):
+        run = self.calibrated_run()
+        self.advance(2)
+        self.community.progress('22',run['id'],1,2,2000)
+        self.store.delete_viewer_data('22','11')
+        self.assertEqual(self.community.public()['community_total'],0)
+        with self.assertRaises(ValueError):
+            self.store.profile('22')
+
+        self.store.login({'user_id':'33','login':'dual-role'}, {'access_token':'ADMIN'})
+        run = self.community.start('33')
+        self.advance(3)
+        self.community.calibrate('33',run['id'],165,95,3000)
+        self.advance(1)
+        self.community.progress('33',run['id'],1,1,1000)
+        self.store.delete_viewer_data('33','11')
+        self.assertEqual(self.community.public()['community_total'],0)
+        self.assertEqual(self.store.profile('33')['login'],'dual-role')
+        self.assertEqual(self.store.credential_snapshot('33')[1]['access_token'],'ADMIN')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -309,6 +309,29 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(json.loads(self.call('/api/community')[1])['community_total'],1)
         self.assertEqual(self.call('/api/owed','POST',viewer,{'owed':10})[0],403)
 
+    def test_viewer_can_delete_participation_and_remove_contribution(self):
+        viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
+        _,raw,_ = self.call('/api/viewer/start','POST',viewer,{})
+        run = json.loads(raw)['run']
+        self.call('/api/viewer/calibrate','POST',viewer,
+                  {'run_id':run['id'],'standing_angle':165,'squat_angle':95,'duration_ms':3000})
+        self.now[0] += 1
+        self.call('/api/viewer/progress','POST',viewer,
+                  {'run_id':run['id'],'sequence':1,'count':1,'elapsed_ms':1000})
+        self.assertEqual(self.call('/api/viewer/delete','POST',viewer,{'confirm':'no'})[0],400)
+        status,_,headers = self.call('/api/viewer/delete','POST',viewer,{'confirm':'DELETE'})
+        self.assertEqual(status,200)
+        self.assertTrue(any(key == 'Set-Cookie' and 'Max-Age=0' in value for key,value in headers))
+        self.assertIsNone(self.store.session(viewer))
+        self.assertEqual(json.loads(self.call('/api/community')[1])['community_total'],0)
+        with self.assertRaises(ValueError):
+            self.store.profile('33')
+
+    def test_viewer_delete_cannot_delete_channel_owner(self):
+        viewer = self.store.login({'user_id':'11','login':'alice'}, {'access_token':'VIEWER'}, role='viewer')
+        self.assertEqual(self.call('/api/viewer/delete','POST',viewer,{'confirm':'DELETE'})[0],400)
+        self.assertEqual(self.store.profile('11')['login'],'alice')
+
     def test_viewer_api_rejects_unexpected_fields_and_impossible_speed(self):
         viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
         _,raw,_ = self.call('/api/viewer/start','POST',viewer,{})

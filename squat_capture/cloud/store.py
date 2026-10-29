@@ -277,6 +277,31 @@ class Store:
                 if table in tables:db.execute(f'DELETE FROM {table} WHERE user_id=?',(uid,))
             db.execute('DELETE FROM users WHERE id=?',(uid,))
 
+    def delete_viewer_data(self, uid, protected_owner_id=''):
+        """Erase viewer participation while preserving any broadcaster account."""
+        if uid == protected_owner_id:
+            raise ValueError('The channel owner must manage their account from the broadcaster control panel.')
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            user = db.execute('SELECT has_credentials FROM users WHERE id=?',(uid,)).fetchone()
+            if not user:
+                raise ValueError('Unknown viewer')
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'community_contributions' in tables and 'community_channels' in tables:
+                totals = db.execute(
+                    'SELECT owner_id,COALESCE(SUM(amount),0) AS amount FROM community_contributions '
+                    'WHERE viewer_id=? AND revoked=0 GROUP BY owner_id',(uid,)).fetchall()
+                for total in totals:
+                    db.execute('UPDATE community_channels SET total=MAX(0,total-?) WHERE owner_id=?',
+                               (total['amount'],total['owner_id']))
+            for table in ('community_flags','community_viewer_daily','community_contributions','community_runs'):
+                if table in tables:
+                    db.execute(f'DELETE FROM {table} WHERE viewer_id=?',(uid,))
+            db.execute("DELETE FROM sessions WHERE user_id=? AND role='viewer'",(uid,))
+            if not user['has_credentials']:
+                db.execute('DELETE FROM auth_health WHERE user_id=?',(uid,))
+                db.execute('DELETE FROM users WHERE id=?',(uid,))
+
     def profile(self, uid):
         with self.connection() as db:
             row = db.execute('SELECT id,login,owed,lifetime FROM users WHERE id=?', (uid,)).fetchone()

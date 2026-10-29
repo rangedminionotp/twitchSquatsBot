@@ -295,7 +295,8 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 self.reply(401, {'error': 'Login required'})
                 return
             path = urlsplit(self.path).path
-            viewer_paths = {'/api/viewer/start','/api/viewer/calibrate','/api/viewer/progress','/api/logout'}
+            viewer_paths = {'/api/viewer/start','/api/viewer/calibrate','/api/viewer/progress',
+                            '/api/viewer/delete','/api/logout'}
             if session['role'] != 'admin' and path not in viewer_paths:
                 self.reply(403, {'error': 'Broadcaster access required'})
                 return
@@ -362,6 +363,12 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                     run = community.progress(session['user_id'],payload['run_id'],payload['sequence'],
                                              payload['count'],payload['elapsed_ms'])
                     self.reply(200, {'run':run, 'community':community.viewer(session['user_id'])})
+                elif path == '/api/viewer/delete' and payload == {'confirm':'DELETE'}:
+                    if session['role'] != 'viewer':
+                        self.reply(403,{'error':'Viewer session required'})
+                        return
+                    store.delete_viewer_data(session['user_id'],settings.community_owner_id)
+                    self.reply(200,{'ok':True},headers=[self.cookie_header(session_cookie,'',0)])
                 else:
                     self.reply(400, {'error': 'Unknown action or unexpected fields'})
             except ChallengeConflict as error:
