@@ -51,6 +51,11 @@ Use a domain/subdomain with HTTPS, not a public tunnel to the existing local app
    Fix every `FAIL`; `WARN database bootstrap` is expected before the first start.
    Then start the service. Check `/health` through HTTPS, server restart recovery,
    secure cookies, unauthorized API rejection, and tenant isolation.
+   From a separate machine, run
+   `python -m squat_capture.cloud.smoke https://YOUR_HOST`. This read-only check
+   verifies the health/public pages, anonymous API boundary, static allowlist and
+   security headers. Add `--oauth` only when you intend to create one transient
+   login state and validate the Twitch redirect plus secure state cookie.
 9. Enable EventSub, restart and authorize event scopes from each tester's account.
    Save rules, enable listening and wait for verification. Confirm provider events
    rather than relying on mocked tests. Stop listening before planned teardown.
