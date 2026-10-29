@@ -253,8 +253,11 @@ def make_handler(settings, store, oauth, token_service=None, twitch_data=None, d
                 self.reply(200, (STATIC / 'camera.html').read_bytes(), 'text/html; charset=utf-8')
             elif path == '/viewer':
                 self.reply(200, (STATIC / 'viewer.html').read_bytes(), 'text/html; charset=utf-8')
+            elif path in ('/privacy','/rules'):
+                self.reply(200, (STATIC / (path.removeprefix('/') + '.html')).read_bytes(), 'text/html; charset=utf-8')
             elif path in ('/assets/camera.js', '/assets/capture-core.mjs', '/assets/pose.mjs', '/assets/camera.css',
-                          '/assets/donations.js', '/assets/viewer.js', '/assets/viewer-core.mjs', '/assets/viewer.css'):
+                          '/assets/donations.js', '/assets/viewer.js', '/assets/viewer-core.mjs', '/assets/viewer.css',
+                          '/assets/legal.css'):
                 name = path.removeprefix('/assets/')
                 mime = 'text/css' if name.endswith('.css') else 'text/javascript'
                 self.reply(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')

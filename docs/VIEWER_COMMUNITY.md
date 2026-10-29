@@ -82,12 +82,19 @@ session CSRF header. Request bodies cannot select a Viewer or channel.
 | `POST /api/viewer/start` | Signed in | none (`{}`) | Resume the active run or issue the next bounded run. |
 | `POST /api/viewer/calibrate` | Signed in | `run_id`, `standing_angle`, `squat_angle`, `duration_ms` | Unlock progress after plausible calibration. |
 | `POST /api/viewer/progress` | Signed in | `run_id`, `sequence`, `count`, `elapsed_ms` | Submit an idempotent cumulative total. |
+| `POST /api/viewer/delete` | Signed in Viewer | `confirm` = `DELETE` | Delete Viewer participation and remove accepted reps. |
 | `GET /api/community/admin` | Configured owner | — | Recent increments and review flags. |
 | `POST /api/community/revoke` | Configured owner | `contribution_id` | Revoke one increment and end its run. |
 
 Revocation subtracts the increment from the Community Count and that Viewer's
 daily accepted amount. It is idempotent. It does not rewrite a prior video or pose
 record because no such record exists.
+
+Public plain-language disclosures are served at `/privacy` and `/rules`. Viewer
+OAuth tokens are discarded after identity verification; only the Twitch ID and
+login name are retained for Viewer-only accounts. The live deletion action does
+not remove records from existing backups, which remain subject to the operator's
+documented retention policy.
 
 ## Verification
 

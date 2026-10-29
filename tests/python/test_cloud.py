@@ -287,6 +287,14 @@ class CloudTests(unittest.TestCase):
         self.assertIn(b'Video and pose landmarks stay in your browser',body)
         self.assertIn('camera=(self)',dict(headers)['Permissions-Policy'])
 
+    def test_public_privacy_and_rules_are_static_and_camera_free(self):
+        for path, phrase in (('/privacy',b'Your camera stays with you'),('/rules',b'No economic value')):
+            status,body,headers = self.call(path)
+            self.assertEqual(status,200)
+            self.assertIn(phrase,body)
+            self.assertIn('camera=()',dict(headers)['Permissions-Policy'])
+        self.assertEqual(self.call('/assets/legal.css')[0],200)
+
     def test_viewer_contribution_api_uses_session_identity(self):
         viewer = self.store.login({'user_id':'33','login':'charlie'}, {'access_token':'TEST'}, role='viewer')
         status,raw,_ = self.call('/api/viewer',token=viewer)
