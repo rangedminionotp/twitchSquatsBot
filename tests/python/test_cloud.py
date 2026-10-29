@@ -235,8 +235,19 @@ class CloudTests(unittest.TestCase):
         viewer = self.store.login({'user_id':'33','login':'viewer'}, {'access_token':'TEST'}, role='viewer')
         self.assertEqual(self.store.session(self.a)['role'],'admin')
         self.assertEqual(self.store.session(viewer)['role'],'viewer')
+        self.assertNotIn('33',self.store.credential_users())
+        with self.assertRaisesRegex(ValueError,'no stored Twitch credentials'):
+            self.store.credential_snapshot('33')
         with self.assertRaises(ValueError):
             self.store.login({'user_id':'44','login':'invalid'}, {'access_token':'TEST'}, role='owner')
+
+    def test_viewer_login_never_overwrites_broadcaster_credentials(self):
+        self.store.login({'user_id':'33','login':'viewer'}, {'access_token':'VIEWER-ONLY'}, role='viewer')
+        admin = self.store.login({'user_id':'33','login':'renamed'}, {'access_token':'ADMIN'}, role='admin')
+        self.assertEqual(self.store.session(admin)['role'],'admin')
+        self.assertEqual(self.store.credential_snapshot('33')[1]['access_token'],'ADMIN')
+        self.store.login({'user_id':'33','login':'renamed'}, {'access_token':'NEW-VIEWER'}, role='viewer')
+        self.assertEqual(self.store.credential_snapshot('33')[1]['access_token'],'ADMIN')
 
     def test_oauth_callback_browser_binding_and_cookie(self):
         status,_,headers = self.call('/auth/twitch')

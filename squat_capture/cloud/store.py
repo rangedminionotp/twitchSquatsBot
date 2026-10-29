@@ -26,7 +26,8 @@ class Store:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY, login TEXT NOT NULL, credentials BLOB NOT NULL,
-                    owed INTEGER NOT NULL DEFAULT 0, lifetime INTEGER NOT NULL DEFAULT 0);
+                    owed INTEGER NOT NULL DEFAULT 0, lifetime INTEGER NOT NULL DEFAULT 0,
+                    has_credentials INTEGER NOT NULL DEFAULT 1);
                 CREATE TABLE IF NOT EXISTS sessions (
                     hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
                     csrf TEXT NOT NULL, expires REAL NOT NULL,
@@ -80,6 +81,11 @@ class Store:
             oauth_columns = {row['name'] for row in db.execute('PRAGMA table_info(oauth_states)')}
             if 'purpose' not in oauth_columns:
                 db.execute("ALTER TABLE oauth_states ADD COLUMN purpose TEXT NOT NULL DEFAULT 'admin'")
+            user_columns = {row['name'] for row in db.execute('PRAGMA table_info(users)')}
+            if 'has_credentials' not in user_columns:
+                # Accounts created before this migration were operator accounts
+                # and already have a stored Twitch credential bundle.
+                db.execute('ALTER TABLE users ADD COLUMN has_credentials INTEGER NOT NULL DEFAULT 1')
 
     @contextmanager
     def connection(self):
@@ -116,16 +122,26 @@ class Store:
             raise ValueError('Invalid Twitch identity')
         if role not in ('admin', 'viewer'):
             raise ValueError('Invalid session role')
-        encrypted = self.cipher.encrypt(json.dumps(tokens).encode())
+        # Viewers only need Twitch for one-time identity verification. Keep an
+        # encrypted placeholder for old NOT NULL databases, but do not retain
+        # their OAuth credentials or enroll them in background token workers.
+        encrypted = self.cipher.encrypt(json.dumps(tokens if role == 'admin' else {}).encode())
         session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self.connection() as db:
-            db.execute('INSERT INTO users(id,login,credentials) VALUES(?,?,?) '
-                       'ON CONFLICT(id) DO UPDATE SET login=excluded.login,credentials=excluded.credentials',
-                       (uid, name, encrypted))
+            if role == 'admin':
+                db.execute('INSERT INTO users(id,login,credentials,has_credentials) VALUES(?,?,?,1) '
+                           'ON CONFLICT(id) DO UPDATE SET login=excluded.login,'
+                           'credentials=excluded.credentials,has_credentials=1',
+                           (uid, name, encrypted))
+            else:
+                db.execute('INSERT INTO users(id,login,credentials,has_credentials) VALUES(?,?,?,0) '
+                           'ON CONFLICT(id) DO UPDATE SET login=excluded.login',
+                           (uid, name, encrypted))
             db.execute('DELETE FROM sessions WHERE expires <= ?', (time.time(),))
-            db.execute('INSERT INTO auth_health VALUES(?,?,?) ON CONFLICT(user_id) '
-                       'DO UPDATE SET state=excluded.state,checked=excluded.checked',
-                       (uid,'connected',time.time()))
+            if role == 'admin':
+                db.execute('INSERT INTO auth_health VALUES(?,?,?) ON CONFLICT(user_id) '
+                           'DO UPDATE SET state=excluded.state,checked=excluded.checked',
+                           (uid,'connected',time.time()))
             # Browser sessions remain short; background token maintenance does
             # not extend browser login or recreate logged-out sessions.
             db.execute('INSERT INTO sessions(hash,user_id,csrf,expires,role) VALUES(?,?,?,?,?)',
@@ -134,15 +150,17 @@ class Store:
 
     def credential_snapshot(self, uid):
         with self.connection() as db:
-            row = db.execute('SELECT credentials FROM users WHERE id=?',(uid,)).fetchone()
+            row = db.execute('SELECT credentials,has_credentials FROM users WHERE id=?',(uid,)).fetchone()
             if not row:
                 raise ValueError('Unknown user')
+            if not row['has_credentials']:
+                raise ValueError('User has no stored Twitch credentials')
             blob = row['credentials']
         return blob, json.loads(self.cipher.decrypt(blob))
 
     def credential_users(self):
         with self.connection() as db:
-            return [row[0] for row in db.execute('SELECT id FROM users')]
+            return [row[0] for row in db.execute('SELECT id FROM users WHERE has_credentials=1')]
 
     def listener(self, uid):
         with self.connection() as db:
