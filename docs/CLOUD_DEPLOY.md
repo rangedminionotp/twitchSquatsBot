@@ -41,7 +41,12 @@ Use a domain/subdomain with HTTPS, not a public tunnel to the existing local app
    Validate the config with `nginx -t` before enabling it. This repo does not obtain
    or install certificates; configure and test automated renewal yourself.
 8. Install `deploy/cloud/squat-capture.service` as a systemd unit, reload systemd,
-   then start the service. Check `/health` through HTTPS, server restart recovery,
+   then run the same fail-closed check used by systemd:
+   `sudo -u squatcapture /opt/squat-capture/.venv/bin/python -m squat_capture.cloud.preflight`.
+   It validates the public origin, Twitch configuration, owner admission, timezone,
+   absolute database location and data-directory permissions without printing secrets.
+   Fix every `FAIL`; `WARN database bootstrap` is expected before the first start.
+   Then start the service. Check `/health` through HTTPS, server restart recovery,
    secure cookies, unauthorized API rejection, and tenant isolation.
 9. Enable EventSub, restart and authorize event scopes from each tester's account.
    Save rules, enable listening and wait for verification. Confirm provider events

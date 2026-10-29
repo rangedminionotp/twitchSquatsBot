@@ -11,6 +11,7 @@ WorkingDirectory=/opt/squat-capture
 EnvironmentFile=/etc/squat-capture/cloud.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/opt/squat-capture/.venv/bin/python -m squat_capture.cloud.preflight
 ExecStart=/opt/squat-capture/.venv/bin/python -m squat_capture.cloud
 Restart=on-failure
 RestartSec=5
